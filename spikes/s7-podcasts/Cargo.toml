@@ -1,0 +1,16 @@
+[package]
+name = "s7-podcasts"
+version = "0.0.0"
+edition = "2024"
+publish = false
+description = "Spike S7: which podcast data does the session reach, and which episodes does librespot play?"
+
+[workspace]
+
+[dependencies]
+descant-spotify = { path = "../../crates/descant-spotify" }
+librespot-core = { git = "https://github.com/librespot-org/librespot", rev = "99b6088bf3ea028f90192676ac1a337fa4b2ed12", default-features = false, features = ["native-tls"] }
+librespot-metadata = { git = "https://github.com/librespot-org/librespot", rev = "99b6088bf3ea028f90192676ac1a337fa4b2ed12", default-features = false, features = ["native-tls"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
+serde_json = "1"
+http = "1"
