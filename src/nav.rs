@@ -15,6 +15,7 @@ use descant_spotify::{
     library::{Collection, PlaylistSummary},
     profile::Profile,
 };
+use gtk::{glib, prelude::*};
 
 /// Where a page can lead.
 #[derive(Clone)]
@@ -71,6 +72,9 @@ pub struct Library {
     pub saved_episodes: RefCell<HashSet<String>>,
     /// Whether those two were read: once per login, when podcasts first show.
     pub podcasts_read: std::cell::Cell<bool>,
+    /// Images waiting for a playlist's cover: one without a picture of its own
+    /// borrows its first song's, which the sidebar finds after Home was built.
+    pub awaited_covers: RefCell<Vec<(String, glib::WeakRef<gtk::Image>)>>,
 }
 
 #[derive(Default)]
@@ -109,6 +113,30 @@ impl<T> Fresh<T> {
 }
 
 impl Library {
+    /// Fills `image` once a cover for the playlist `uri` is found.
+    pub fn await_cover(&self, uri: &str, image: &gtk::Image) {
+        self.awaited_covers
+            .borrow_mut()
+            .push((uri.to_string(), image.downgrade()));
+    }
+
+    /// The images waiting for `uri`'s cover. They stop waiting; so do the
+    /// ones whose page is gone.
+    pub fn take_awaiting(&self, uri: &str) -> Vec<gtk::Image> {
+        let mut found = Vec::new();
+        self.awaited_covers
+            .borrow_mut()
+            .retain(|(waits_for, weak)| match weak.upgrade() {
+                Some(image) if waits_for == uri => {
+                    found.push(image);
+                    false
+                }
+                Some(_) => true,
+                None => false,
+            });
+        found
+    }
+
     /// Takes in a fresh read of the collection.
     pub fn set_collection(&self, collection: Collection) {
         *self.liked.borrow_mut() = collection.tracks.iter().cloned().collect();
@@ -140,6 +168,7 @@ impl Library {
         self.followed_shows.take();
         self.saved_episodes.take();
         self.podcasts_read.set(false);
+        self.awaited_covers.take();
         self.home.made_for_you.clear();
         self.home.recently_played.clear();
         self.home.top.clear();

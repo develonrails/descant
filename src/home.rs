@@ -146,7 +146,13 @@ fn tiles(nav: &Nav) -> gtk::FlowBox {
     let mut destinations = vec![Destination::Liked];
     flow.append(&tile("Liked Songs", None));
     for p in nav.library.playlists.borrow().iter().take(TILES - 1) {
-        flow.append(&tile(&p.name, Some(&p.covers)));
+        let tile = tile(&p.name, Some(&p.covers));
+        if p.covers.is_empty()
+            && let Some(image) = tile.first_child().and_downcast::<gtk::Image>()
+        {
+            nav.library.await_cover(&p.uri, &image);
+        }
+        flow.append(&tile);
         destinations.push(Destination::Playlist {
             uri: p.uri.clone(),
             name: p.name.clone(),

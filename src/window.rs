@@ -1008,8 +1008,21 @@ impl Ui {
 
     /// Puts a cover on a sidebar row that went without one.
     fn set_playlist_cover(&self, index: usize, covers: &[descant_core::track::Cover]) {
-        if let Some(playlist) = self.library.playlists.borrow_mut().get_mut(index) {
-            playlist.covers = covers.to_vec();
+        let uri = self
+            .library
+            .playlists
+            .borrow_mut()
+            .get_mut(index)
+            .map(|playlist| {
+                playlist.covers = covers.to_vec();
+                playlist.uri.clone()
+            });
+        // Home's tiles were built before this cover was found.
+        for image in uri
+            .map(|uri| self.library.take_awaiting(&uri))
+            .unwrap_or_default()
+        {
+            images::show(&image, pick(covers, image.pixel_size(), &image));
         }
         let row = index
             .try_into()
