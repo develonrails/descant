@@ -7,6 +7,11 @@ use gtk::glib;
 
 use crate::images;
 
+/// Liked, and the button that likes: Lucide's heart, filled and hollow
+/// (`data/icons/actions`). Adwaita has none since GNOME 51.
+pub const LIKED_ICON: &str = "heart-filled-symbolic";
+pub const LIKE_ICON: &str = "heart-outline-symbolic";
+
 /// Thumbnail size in song rows, in logical pixels.
 pub const THUMB: i32 = 40;
 

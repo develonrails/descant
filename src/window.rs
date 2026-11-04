@@ -33,7 +33,7 @@ use crate::{
     runtime, search,
     settings::{self, KEEP_PLAYING, VOLUME},
     tracks::{Source, TrackPage},
-    widgets::{cover_image, pick, with_header},
+    widgets::{LIKE_ICON, LIKED_ICON, cover_image, pick, with_header},
 };
 
 /// Cover art in the now-playing bar and in the sidebar, in logical pixels.
@@ -44,7 +44,7 @@ const SIDEBAR_COVER: i32 = 32;
 const PLACES: &[(&str, &str, &str)] = &[
     ("home", "Home", "go-home-symbolic"),
     ("search", "Search", "system-search-symbolic"),
-    ("liked", "Liked Songs", "starred-symbolic"),
+    ("liked", "Liked Songs", LIKED_ICON),
     ("albums", "Albums", "media-optical-symbolic"),
     ("artists", "Artists", "avatar-default-symbolic"),
 ];
@@ -318,7 +318,7 @@ impl Ui {
         volume.set_draw_value(false);
         volume.set_tooltip_text(Some("Volume"));
         volume.update_property(&[gtk::accessible::Property::Label("Volume")]);
-        let like = round_button("non-starred-symbolic", "Save to Liked Songs", "win.like");
+        let like = round_button(LIKE_ICON, "Save to Liked Songs", "win.like");
         // The bar's top edge doubles as the position: a hair-thin scale that
         // thickens under the pointer, so it can also be dragged to seek.
         let progress = gtk::Scale::with_range(gtk::Orientation::Horizontal, 0.0, 1.0, 1000.0);
@@ -1183,11 +1183,11 @@ impl Ui {
             .contains(&*self.current.borrow());
         // Filled or hollow says it; the colour only underlines it.
         if liked {
-            self.like.set_icon_name("starred-symbolic");
+            self.like.set_icon_name(LIKED_ICON);
             self.like.add_css_class("accent");
             self.like.set_tooltip_text(Some("Remove from Liked Songs"));
         } else {
-            self.like.set_icon_name("non-starred-symbolic");
+            self.like.set_icon_name(LIKE_ICON);
             self.like.remove_css_class("accent");
             self.like.set_tooltip_text(Some("Save to Liked Songs"));
         }

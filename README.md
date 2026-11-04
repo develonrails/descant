@@ -108,6 +108,9 @@ Run the tests with `cargo test --workspace`. CI also runs `cargo fmt` and
 Descant stands on [librespot](https://github.com/librespot-org/librespot), which
 does the hard part.
 
+The heart is [Lucide](https://lucide.dev)'s (ISC); its licence is beside it in
+`data/icons/actions`.
+
 If Descant is useful to you, you can [buy me a coffee](https://ko-fi.com/apenzoon).
 
 ## License

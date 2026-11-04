@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Built into the binary. GTK looks for icons under the app's resource
+     path, /io/github/develonrails/Descant/icons, on its own. -->
+<gresources>
+  <gresource prefix="/io/github/develonrails/Descant/icons/scalable/actions">
+    <file>heart-filled-symbolic.svg</file>
+    <file>heart-outline-symbolic.svg</file>
+  </gresource>
+</gresources>

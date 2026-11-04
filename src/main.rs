@@ -64,8 +64,15 @@ const CSS: &str = "
 }
 ";
 
+/// The icons Adwaita lacks (the hearts), built into the binary. GTK finds
+/// them on its own under the app's resource path, the app id as a path.
+fn register_resources() {
+    gtk::gio::resources_register_include!("descant.gresource").expect("built-in resources");
+}
+
 fn main() -> gtk::glib::ExitCode {
     descant_playback::tap::install();
+    register_resources();
     let app = adw::Application::builder().application_id(APP_ID).build();
     app.connect_startup(|_| {
         let provider = gtk::CssProvider::new();
@@ -86,4 +93,20 @@ fn main() -> gtk::glib::ExitCode {
     app.set_accels_for_action("win.next", &["<Control>Right"]);
     app.set_accels_for_action("win.previous", &["<Control>Left"]);
     app.run()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_hearts_are_built_in_where_gtk_looks_for_icons() {
+        register_resources();
+        let base = APP_ID.replace('.', "/");
+        for icon in [widgets::LIKED_ICON, widgets::LIKE_ICON] {
+            let path = format!("/{base}/icons/scalable/actions/{icon}.svg");
+            let found = gtk::gio::resources_lookup_data(&path, gtk::gio::ResourceLookupFlags::NONE);
+            assert!(found.is_ok(), "{path} is not built in");
+        }
+    }
 }

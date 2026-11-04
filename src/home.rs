@@ -16,7 +16,7 @@ use crate::{
     grid::{self, Card},
     nav::{Destination, Fresh, Nav},
     runtime,
-    widgets::{cover, section_title, song_list, song_row, with_header},
+    widgets::{LIKED_ICON, cover, section_title, song_list, song_row, with_header},
 };
 
 const TILE_COVER: i32 = 56;
@@ -164,7 +164,7 @@ fn tile(name: &str, covers: Option<&[descant_core::track::Cover]>) -> gtk::Box {
         Some(covers) => cover(covers, TILE_COVER, "cover").upcast(),
         None => {
             let heart = gtk::Image::builder()
-                .icon_name("starred-symbolic")
+                .icon_name(LIKED_ICON)
                 .pixel_size(24)
                 .width_request(TILE_COVER)
                 .height_request(TILE_COVER)
@@ -238,7 +238,7 @@ fn top_songs(nav: &Nav, tracks: &[TrackInfo]) -> gtk::ListBox {
         if nav.library.liked.borrow().contains(&track.uri) {
             extra.push(
                 gtk::Image::builder()
-                    .icon_name("starred-symbolic")
+                    .icon_name(LIKED_ICON)
                     .css_classes(["accent"])
                     .build()
                     .upcast(),
