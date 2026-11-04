@@ -10,6 +10,7 @@
 use std::time::Duration;
 
 use descant_core::{
+    quality::Quality,
     supervisor::{Command, Config, Effect, Input, Notice, Status, Supervisor},
     time::Millis,
     track::TrackInfo,
@@ -67,6 +68,9 @@ pub struct ControllerConfig {
     pub resume: Option<ResumePoint>,
     /// The equalizer curve, shared with the UI; kept across reconnects.
     pub equalizer: EqualizerSetting,
+    /// Which stream to ask Spotify for. Fixed when the player is built, so
+    /// changing it builds a new one.
+    pub quality: Quality,
 }
 
 impl Default for ControllerConfig {
@@ -78,6 +82,7 @@ impl Default for ControllerConfig {
             initial_volume: u16::MAX,
             resume: None,
             equalizer: EqualizerSetting::default(),
+            quality: Quality::default(),
         }
     }
 }
@@ -118,6 +123,7 @@ async fn connect(
         credentials.clone(),
         &config.device_name,
         volume,
+        config.quality,
         config.equalizer.clone(),
         reports,
     )
@@ -127,7 +133,7 @@ async fn connect(
 
 async fn run(
     credentials: Credentials,
-    config: ControllerConfig,
+    mut config: ControllerConfig,
     mut commands: mpsc::UnboundedReceiver<Command>,
     updates: mpsc::UnboundedSender<Update>,
 ) {
@@ -182,6 +188,13 @@ async fn run(
                 };
                 tokio::select! {
                     command = commands.recv() => match command {
+                        // The bitrate is fixed when the player is built, so
+                        // this is a reconnect: the rules already know how to
+                        // put playback back where it was.
+                        Some(Command::SetQuality(quality)) => {
+                            config.quality = quality;
+                            Input::SessionLost
+                        }
                         Some(command) => {
                             if let Command::SetVolume(level) = command {
                                 volume = level;

@@ -11,6 +11,7 @@ use std::sync::{
 };
 
 use descant_core::{
+    quality::Quality,
     supervisor::{Command, Effect, Input},
     track::{Cover, TrackInfo},
 };
@@ -19,7 +20,7 @@ use librespot_core::{Error, authentication::Credentials, session::Session};
 use librespot_metadata::audio::{AudioItem, UniqueFields};
 use librespot_playback::{
     audio_backend,
-    config::{AudioFormat, PlayerConfig},
+    config::{AudioFormat, Bitrate, PlayerConfig},
     mixer::{self, MixerConfig},
     player::{Player, PlayerEvent},
 };
@@ -119,6 +120,15 @@ pub struct LibrespotEngine {
     tasks: Vec<JoinHandle<()>>,
 }
 
+/// What librespot calls the stream Spotify sends.
+fn bitrate(quality: Quality) -> Bitrate {
+    match quality {
+        Quality::Normal => Bitrate::Bitrate96,
+        Quality::High => Bitrate::Bitrate160,
+        Quality::VeryHigh => Bitrate::Bitrate320,
+    }
+}
+
 impl LibrespotEngine {
     /// Connects `session` with `credentials`, appears as a Connect device
     /// called `device_name`, and reports to `reports` until shut down.
@@ -127,6 +137,7 @@ impl LibrespotEngine {
         credentials: Credentials,
         device_name: &str,
         initial_volume: u16,
+        quality: Quality,
         equalizer: EqualizerSetting,
         reports: UnboundedSender<Report>,
     ) -> Result<LibrespotEngine, Error> {
@@ -138,7 +149,10 @@ impl LibrespotEngine {
 
         let sink_reports = reports.clone();
         let player = Player::new(
-            PlayerConfig::default(),
+            PlayerConfig {
+                bitrate: bitrate(quality),
+                ..PlayerConfig::default()
+            },
             session.clone(),
             mixer.get_soft_volume(),
             move || {
@@ -240,6 +254,9 @@ impl LibrespotEngine {
 
     fn send(&self, command: &Command) -> Result<(), Error> {
         match command {
+            // The controller answers this by building a new player, so it
+            // never reaches an engine.
+            Command::SetQuality(_) => Ok(()),
             Command::Play => self.spirc.play(),
             Command::Pause => self.spirc.pause(),
             Command::Seek(ms) => self.spirc.set_position_ms(*ms),

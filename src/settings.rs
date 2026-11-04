@@ -5,7 +5,10 @@
 //! the copy `build.rs` compiled. Inside the sandbox GLib keeps the values in
 //! `~/.var/app/io.github.develonrails.Descant/config/glib-2.0/settings/keyfile`.
 
-use descant_core::equalizer::{Curve, MAX_GAIN_DB};
+use descant_core::{
+    equalizer::{Curve, MAX_GAIN_DB},
+    quality::Quality,
+};
 use descant_playback::controller::ResumePoint;
 use gtk::{gio, prelude::*};
 
@@ -18,8 +21,15 @@ pub const VOLUME: &str = "volume";
 /// Where playback stopped: (context or "", track, position in ms).
 const RESUME: &str = "resume";
 pub const EQUALIZER: &str = "equalizer";
+/// Which stream to ask Spotify for.
+pub const QUALITY: &str = "quality";
 const EQUALIZER_GAINS: &str = "equalizer-gains";
 const EQUALIZER_PREAMP: &str = "equalizer-preamp";
+
+/// The stream to ask for; anything unrecognised plays at the usual rate.
+pub fn quality(settings: &gio::Settings) -> Quality {
+    Quality::from_name(&settings.string(QUALITY))
+}
 
 /// The saved equalizer curve, whether or not it is switched on.
 pub fn equalizer_curve(settings: &gio::Settings) -> Curve {

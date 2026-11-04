@@ -120,7 +120,9 @@ struct Ui {
     /// What comes after the current track.
     queue: RefCell<Vec<String>>,
     /// Track lists of open pages, to re-mark the playing track.
-    track_lists: RefCell<Vec<glib::WeakRef<gio::ListStore>>>,
+    /// The track lists on open pages, so a track change can mark its row
+    /// in each of them.
+    track_lists: RefCell<Vec<glib::WeakRef<gtk::ListView>>>,
     inhibit: RefCell<Option<u32>>,
     pairing_url: RefCell<String>,
     blocked_shown: RefCell<bool>,
@@ -523,6 +525,27 @@ impl Ui {
             };
             ui.send(command);
         });
+        // Space is the obvious key for this, but it is also how you type a
+        // space and how a focused button is pressed. In the bubble phase the
+        // focused widget has already had it, so an entry keeps its space and
+        // only an otherwise-unhandled one reaches playback.
+        let keys = gtk::EventControllerKey::new();
+        keys.set_propagation_phase(gtk::PropagationPhase::Bubble);
+        let ui = self.clone();
+        keys.connect_key_pressed(move |_, key, _, state| {
+            let bare = !state.intersects(
+                gtk::gdk::ModifierType::CONTROL_MASK
+                    | gtk::gdk::ModifierType::ALT_MASK
+                    | gtk::gdk::ModifierType::SUPER_MASK,
+            );
+            if key == gtk::gdk::Key::space && bare {
+                let _ =
+                    gtk::prelude::WidgetExt::activate_action(&ui.window, "win.play-pause", None);
+                return glib::Propagation::Stop;
+            }
+            glib::Propagation::Proceed
+        });
+        self.window.add_controller(keys);
         action("next", self.clone(), |ui| ui.send(Command::Skip(1)));
         action("previous", self.clone(), |ui| ui.send(Command::Skip(-1)));
         action("queue", self.clone(), |ui| ui.open_queue());
@@ -712,7 +735,7 @@ impl Ui {
         let page = TrackPage::new(nav, source, title, covers);
         let mut lists = self.track_lists.borrow_mut();
         lists.retain(|weak| weak.upgrade().is_some());
-        lists.push(page.store().downgrade());
+        lists.push(page.list().downgrade());
         page.page.clone()
     }
 
@@ -818,6 +841,7 @@ impl Ui {
                 initial_volume: volume::from_percent(saved),
                 resume: settings::resume(&self.settings),
                 equalizer: self.equalizer.clone(),
+                quality: settings::quality(&self.settings),
                 ..ControllerConfig::default()
             };
             controller::spawn(credentials, config, updates)
@@ -1039,6 +1063,35 @@ impl Ui {
         // The placeholder icon was drawn small; a cover fills the row.
         image.set_pixel_size(SIDEBAR_COVER);
         images::show(&image, pick(covers, SIDEBAR_COVER, &image));
+    }
+
+    /// Moves the mark to the playing track in every open list.
+    ///
+    /// Rows that scroll into view later are bound against the same URI, so
+    /// this only has to reach the ones already built. Each row carries its
+    /// track's URI as its widget name (`uri#index`), which is what says
+    /// whether it is the one playing.
+    fn mark_playing(&self) {
+        let current = self.current.borrow();
+        self.track_lists.borrow_mut().retain(|weak| {
+            let Some(list) = weak.upgrade() else {
+                return false;
+            };
+            let mut item = list.first_child();
+            while let Some(widget) = item {
+                if let Some(row) = widget.first_child() {
+                    let name = row.widget_name();
+                    let playing = name.split('#').next() == Some(current.as_str());
+                    if playing {
+                        row.add_css_class("playing");
+                    } else {
+                        row.remove_css_class("playing");
+                    }
+                }
+                item = widget.next_sibling();
+            }
+            true
+        });
     }
 
     fn show_status(self: &Rc<Self>, status: Status) {
@@ -1325,15 +1378,7 @@ impl Ui {
         // Mark the playing track in every open list, and follow it with the heart.
         *self.current.borrow_mut() = info.uri;
         self.show_like();
-        let mut lists = self.track_lists.borrow_mut();
-        lists.retain(|weak| match weak.upgrade() {
-            Some(store) => {
-                let n = store.n_items();
-                store.items_changed(0, n, n);
-                true
-            }
-            None => false,
-        });
+        self.mark_playing();
     }
 
     fn send(&self, command: Command) {
@@ -1418,6 +1463,7 @@ impl Ui {
         dialog.add(section(
             "Playback",
             &[
+                ("Play or Pause", "space"),
                 ("Play or Pause", "<Control>space"),
                 ("Next Track", "<Control>Right"),
                 ("Previous Track", "<Control>Left"),

@@ -28,6 +28,16 @@
       <summary>Equalizer pre-amp</summary>
       <description>A gain on everything, in dB.</description>
     </key>
+    <key name="quality" type="s">
+      <choices>
+        <choice value="normal"/>
+        <choice value="high"/>
+        <choice value="very-high"/>
+      </choices>
+      <default>'high'</default>
+      <summary>Streaming quality</summary>
+      <description>Which stream to ask Spotify for: normal (96 kbps), high (160 kbps) or very high (320 kbps, which needs Premium). Changing it reconnects, picking playback up where it was.</description>
+    </key>
     <key name="resume" type="(ssu)">
       <default>('', '', 0)</default>
       <summary>Where playback stopped</summary>

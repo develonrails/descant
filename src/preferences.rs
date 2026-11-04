@@ -12,7 +12,11 @@ use std::{
 };
 
 use adw::prelude::*;
-use descant_core::equalizer::{BANDS, Curve, MAX_GAIN_DB, PRESETS, preset_named};
+use descant_core::{
+    equalizer::{BANDS, Curve, MAX_GAIN_DB, PRESETS, preset_named},
+    quality::Quality,
+    supervisor::Command,
+};
 use descant_playback::equalizer::EqualizerSetting;
 use gtk::{gio, glib};
 
@@ -20,7 +24,7 @@ use crate::{
     images,
     nav::{Event, Nav},
     runtime,
-    settings::{self, EQUALIZER, KEEP_PLAYING},
+    settings::{self, EQUALIZER, KEEP_PLAYING, QUALITY},
 };
 
 /// `nav` is there once signed in; without it there is no account to show.
@@ -53,6 +57,9 @@ fn general(
     let running = adw::PreferencesGroup::builder().title("Running").build();
     running.add(&keep_playing);
 
+    let playback = adw::PreferencesGroup::builder().title("Playback").build();
+    playback.add(&quality_row(settings, nav));
+
     let storage = adw::PreferencesGroup::builder().title("Storage").build();
     storage.add(&artwork_row(dialog));
     storage.add(
@@ -77,9 +84,53 @@ fn general(
         account.add(&account_row(nav, dialog));
         page.add(&account);
     }
+    page.add(&playback);
     page.add(&running);
     page.add(&storage);
     page
+}
+
+/// Which of Spotify's three streams to ask for. The bitrate is fixed when
+/// the player is built, so picking another one reconnects; playback carries
+/// on from where it was, after a pause of about a second.
+fn quality_row(settings: &gio::Settings, nav: Option<&Nav>) -> adw::ComboRow {
+    let names = gtk::StringList::new(&[
+        "Normal — 96 kbps",
+        "High — 160 kbps",
+        "Very high — 320 kbps",
+    ]);
+    let chosen = settings::quality(settings);
+    let row = adw::ComboRow::builder()
+        .title("Streaming Quality")
+        .subtitle("Very high needs Premium. Changing this reconnects.")
+        .model(&names)
+        .selected(
+            Quality::ALL
+                .iter()
+                .position(|quality| *quality == chosen)
+                .unwrap_or_default() as u32,
+        )
+        .build();
+    let settings = settings.clone();
+    let nav = nav.cloned();
+    row.connect_selected_notify(move |row| {
+        let Some(quality) = Quality::ALL.get(row.selected() as usize).copied() else {
+            return;
+        };
+        if settings::quality(&settings) == quality {
+            return;
+        }
+        if let Err(e) = settings.set_string(QUALITY, quality.as_str()) {
+            log::warn!("streaming quality not saved: {e}");
+            return;
+        }
+        // Without a session there is no player to rebuild; the next start
+        // reads the setting anyway.
+        if let Some(nav) = &nav {
+            nav.send(Command::SetQuality(quality));
+        }
+    });
+    row
 }
 
 /// Who is signed in (the display name, else the account id), and Log Out.

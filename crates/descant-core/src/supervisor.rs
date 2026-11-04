@@ -30,6 +30,10 @@ pub enum Command {
     Repeat(Repeat),
     /// Volume on Connect's 0–65535 scale; never held back.
     SetVolume(u16),
+    /// Which stream to ask Spotify for. The bitrate is fixed when the player
+    /// is built, so the controller answers this by building a new one; it
+    /// never reaches the engine as a command.
+    SetQuality(crate::quality::Quality),
     /// Play a list of tracks (top songs) or episodes, starting at `start`,
     /// `position_ms` into it: where an episode was left off, else 0.
     PlayTracks {
@@ -385,7 +389,8 @@ impl Supervisor {
                     | Command::AddToQueue(_)
                     | Command::Shuffle(_)
                     | Command::Repeat(_)
-                    | Command::SetVolume(_) => {} // the retry will play
+                    | Command::SetVolume(_)
+                    | Command::SetQuality(_) => {} // the retry will play
                 }
                 vec![]
             }
@@ -401,7 +406,8 @@ impl Supervisor {
                     | Command::AddToQueue(_)
                     | Command::Shuffle(_)
                     | Command::Repeat(_)
-                    | Command::SetVolume(_) => {}
+                    | Command::SetVolume(_)
+                    | Command::SetQuality(_) => {}
                 }
                 vec![]
             }

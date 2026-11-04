@@ -64,6 +64,19 @@
   <content_rating type="oars-1.1" />
 
   <releases>
+    <release version="0.2.0" date="2026-11-04">
+      <description>
+        <p>Podcasts, and a bar that says where the track stands.</p>
+        <ul>
+          <li>Podcasts and your episodes</li>
+          <li>The bar's top edge shows the position, and can be dragged to seek</li>
+          <li>Streaming quality: normal, high or very high</li>
+          <li>Space plays and pauses</li>
+          <li>Covers for every playlist, and the playing track is marked as it changes</li>
+          <li>Media controls follow along: position, seeking, volume, shuffle and repeat</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.1.0" date="2026-11-04">
       <description>
         <p>The first public build.</p>

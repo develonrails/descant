@@ -61,8 +61,12 @@ pub struct TrackPage {
 }
 
 impl TrackPage {
-    pub fn store(&self) -> &gio::ListStore {
-        &self.store
+    /// The rows themselves. A track change has to reach the rows that are
+    /// already on screen, and the model cannot do that: asking it to report
+    /// the same items again leaves GTK with the same objects and nothing to
+    /// rebind.
+    pub fn list(&self) -> &gtk::ListView {
+        &self.list
     }
 }
 
