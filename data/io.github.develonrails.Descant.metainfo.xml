@@ -64,6 +64,14 @@
   <content_rating type="oars-1.1" />
 
   <releases>
+    <release version="0.2.1" date="2026-11-04">
+      <description>
+        <p>Picks up where it stopped, whatever stopped it.</p>
+        <ul>
+          <li>The place in the track is written down while it plays, so it survives a crash, a kill or a session that ends — not only a clean quit</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.2.0" date="2026-11-04">
       <description>
         <p>Podcasts, and a bar that says where the track stands.</p>

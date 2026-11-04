@@ -437,7 +437,7 @@ dependencies = [
 
 [[package]]
 name = "descant"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "descant-core",
  "descant-playback",
@@ -452,11 +452,11 @@ dependencies = [
 
 [[package]]
 name = "descant-core"
-version = "0.2.0"
+version = "0.2.1"
 
 [[package]]
 name = "descant-playback"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "descant-core",
  "librespot-connect",
@@ -469,7 +469,7 @@ dependencies = [
 
 [[package]]
 name = "descant-spotify"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "descant-core",
  "getrandom 0.3.4",

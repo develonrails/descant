@@ -481,6 +481,17 @@ impl Ui {
             }
             None => glib::ControlFlow::Break,
         });
+        // The place is also written down every few seconds, not only on the
+        // way out: a kill, a crash or a session that ends never reaches the
+        // shutdown handler, and the track would start over next time.
+        let weak = Rc::downgrade(self);
+        glib::timeout_add_local(Duration::from_secs(5), move || match weak.upgrade() {
+            Some(ui) => {
+                ui.save_position();
+                glib::ControlFlow::Continue
+            }
+            None => glib::ControlFlow::Break,
+        });
         let ui = self.clone();
         self.progress.connect_change_value(move |_, _, value| {
             let ms = value.max(0.0) as u32;
@@ -1201,6 +1212,24 @@ impl Ui {
             }
             None => 0,
         }
+    }
+
+    /// Writes down where the track stands, while it plays. Paused playback
+    /// has already been written: the engine reports a place whenever the
+    /// status changes.
+    fn save_position(&self) {
+        let Some((point, playing, since)) = self.resume.borrow().clone() else {
+            return;
+        };
+        if !playing {
+            return;
+        }
+        let ran = u32::try_from(since.elapsed().as_millis()).unwrap_or(u32::MAX);
+        let point = ResumePoint {
+            position_ms: point.position_ms.saturating_add(ran),
+            ..point
+        };
+        settings::set_resume(&self.settings, Some(&point));
     }
 
     /// Moves the edge and the clock to that place, unless it is being dragged.
