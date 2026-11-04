@@ -516,6 +516,9 @@ impl Ui {
             .connect_value_changed(move |scale| ui.volume_moved(scale.value()));
         let ui = self.clone();
         self.shuffle.connect_toggled(move |button| {
+            if let Some(mpris) = &*ui.mpris.borrow() {
+                mpris.shuffle(button.is_active());
+            }
             ui.send(Command::Shuffle(button.is_active()));
         });
         action("new-playlist", self.clone(), |ui| ui.new_playlist());
@@ -715,6 +718,13 @@ impl Ui {
             Box::new(move || ui.send(command())) as Box<dyn Fn()>
         };
         let (toggle, raise, app) = (self.clone(), self.clone(), self.app.clone());
+        let (seek, volume, shuffle, repeat, position) = (
+            self.clone(),
+            self.clone(),
+            self.clone(),
+            self.clone(),
+            self.clone(),
+        );
         let actions = mpris::Actions {
             play_pause: Box::new(move || {
                 let _ = WidgetExt::activate_action(&toggle.window, "win.play-pause", None);
@@ -723,10 +733,23 @@ impl Ui {
             pause: send(|| Command::Pause),
             next: send(|| Command::Skip(1)),
             previous: send(|| Command::Skip(-1)),
+            seek: Box::new(move |ms| seek.send(Command::Seek(ms))),
+            // Through the widgets, so the bar shows it and it is saved as if
+            // the user had done it here.
+            volume: Box::new(move |percent| volume.volume.set_value(percent)),
+            shuffle: Box::new(move |on| shuffle.shuffle.set_active(on)),
+            repeat: Box::new(move |mode| repeat.set_repeat(mode)),
             raise: Box::new(move || raise.window.present()),
             quit: Box::new(move || app.quit()),
+            position: Box::new(move || position.position_ms()),
         };
-        *self.mpris.borrow_mut() = Mpris::start(&self.app, actions);
+        let mpris = Mpris::start(&self.app, actions);
+        if let Some(mpris) = &mpris {
+            mpris.volume(self.volume.value());
+            mpris.shuffle(self.shuffle.is_active());
+            mpris.repeat(self.repeat_mode.get());
+        }
+        *self.mpris.borrow_mut() = mpris;
     }
 
     fn show_pairing(self: &Rc<Self>) {
@@ -794,6 +817,16 @@ impl Ui {
             Update::Queue(upcoming) => *self.queue.borrow_mut() = upcoming,
             Update::Volume(level) => self.show_volume(volume::to_percent(level)),
             Update::Resume { point, playing } => {
+                // Where the place was thought to be, before this replaces it.
+                let expected = self
+                    .resume
+                    .borrow()
+                    .as_ref()
+                    .map(|(was, ..)| (was.track.clone(), self.position_ms()));
+                if let Some(mpris) = &*self.mpris.borrow() {
+                    let expected = expected.as_ref().map(|(t, at)| (t.as_str(), *at));
+                    mpris.moved(expected, &point.track, point.position_ms);
+                }
                 settings::set_resume(&self.settings, Some(&point));
                 *self.resume.borrow_mut() = Some((point, playing, std::time::Instant::now()));
             }
@@ -1045,6 +1078,9 @@ impl Ui {
     /// or following the engine (only the icon changes).
     fn volume_moved(self: &Rc<Self>, percent: f64) {
         self.mute.set_icon_name(volume::icon(percent));
+        if let Some(mpris) = &*self.mpris.borrow() {
+            mpris.volume(percent);
+        }
         if self.volume_following.get() {
             return;
         }
@@ -1110,8 +1146,11 @@ impl Ui {
 
     /// Off → the whole context → this track → off.
     fn cycle_repeat(&self) {
+        self.set_repeat(self.repeat_mode.get().next());
+    }
+
+    fn set_repeat(&self, mode: descant_core::supervisor::Repeat) {
         use descant_core::supervisor::Repeat;
-        let mode = self.repeat_mode.get().next();
         self.repeat_mode.set(mode);
         let (icon, tip) = match mode {
             Repeat::Off => ("media-playlist-repeat-symbolic", "Repeat: Off"),
@@ -1124,6 +1163,9 @@ impl Ui {
             self.repeat.remove_css_class("accent");
         } else {
             self.repeat.add_css_class("accent");
+        }
+        if let Some(mpris) = &*self.mpris.borrow() {
+            mpris.repeat(mode);
         }
         self.send(Command::Repeat(mode));
     }
@@ -1280,6 +1322,9 @@ impl Ui {
         self.resume.borrow_mut().take();
         settings::set_resume(&self.settings, None);
         self.current.borrow_mut().clear();
+        if let Some(mpris) = &*self.mpris.borrow() {
+            mpris.clear();
+        }
         self.show_playlists(Vec::new());
         self.content.replace(std::slice::from_ref(&self.home));
         self.set_inhibit(false);
