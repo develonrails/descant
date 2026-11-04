@@ -11,13 +11,18 @@ GTK 4 and libadwaita, plays through [librespot](https://github.com/librespot-org
 and is built to be light on your computer and to keep playing when other
 clients go quiet.
 
+<p align="center">
+  <img src="docs/screenshots/home.png" alt="Descant's Home in the dark style: quick tiles, Made for you, and the now-playing bar">
+</p>
+
 ## What Descant stands for
 
 **Frugal.** Every feature has to earn its memory. At rest, with Home open,
-Descant uses about 37 MB of private memory and 16 threads, and no CPU at all:
-it wakes up when you do something. Track lists only build the rows you can
-see, covers are kept at exactly the pixels they fill on your screen, and
-every cache has a cap.
+Descant uses about 32 MB of memory of its own and 17 threads, and no CPU at
+all: it wakes up when you do something. Track lists only build the rows you
+can see, episodes come twenty at a time, covers are kept at exactly the
+pixels they fill on your screen, and every cache has a cap. Podcasts cost
+nothing until you open one.
 
 **Sound that keeps playing.** Spotify rations the keys that unlock each
 track. Clients that ignore this start skipping tracks or playing silence.
@@ -26,9 +31,9 @@ its own after sleep or a network change, and picks up where you left off the
 next time you open it.
 
 **Native.** Descant is a GNOME app, not a web page in a window. It follows the
-GNOME Human Interface Guidelines, adapts to narrow windows, keeps its
-settings in GSettings, works with media keys and the shell's media controls
-(MPRIS), and ships as a Flatpak.
+GNOME Human Interface Guidelines, adapts to narrow windows, follows your light
+or dark style and accent colour, keeps its settings in GSettings, works with
+media keys and the shell's media controls (MPRIS), and ships as a Flatpak.
 
 **Focused.** Playlists, podcasts, search, discovery, your library and
 playback, done well. No skins, no visualizers, no friend feed, no news, no
@@ -53,7 +58,9 @@ lives in the system keyring, and audio is streamed, never stored.
 - **Playback:** queue, shuffle, repeat and volume. Descant remembers the track
   and the moment you stopped at.
 - **Spotify Connect:** Descant shows up as a device you can play to from your
-  phone.
+  phone, songs and episodes alike.
+- **Media controls:** play, skip, seek and set the volume from the media keys,
+  GNOME's media controls, GSConnect or `playerctl` (MPRIS).
 - **Ten-band equalizer** with presets, for playback on this computer.
 - **Keep playing in the background** when the window is closed, if you want.
 - **Keyboard shortcuts:** <kbd>Ctrl</kbd>+<kbd>?</kbd> lists them.
@@ -94,17 +101,20 @@ flatpak run org.flatpak.Builder --user --install --force-clean \
     build-dir build-aux/flatpak/io.github.develonrails.Descant.yml
 ```
 
-Run the tests with `cargo test --workspace`. CI also runs `cargo fmt` and
-`cargo clippy -- -D warnings`.
+Run the tests with `cargo test --workspace`; the MPRIS test starts a private
+session bus, so it needs `dbus-daemon`. CI also runs `cargo fmt` and
+`cargo clippy -- -D warnings`. [CONTRIBUTING](docs/CONTRIBUTING.md) has the
+rest: building on Silverblue, trying it against a real account, and how a
+build reaches people.
 
 ## How it is put together
 
 | | |
 |---|---|
-| `crates/descant-core` | The rules: when to play, wait, retry or reconnect, as a state machine with the clock passed in, so every case is tested exactly. Also the equalizer. No I/O. |
+| `crates/descant-core` | The rules: when to play, wait, retry or reconnect, as a state machine with the clock passed in, so every case is tested exactly. Also the equalizer, and the podcast rules: where you left off, what is new, what is played. No I/O. |
 | `crates/descant-playback` | librespot, driven through Spotify Connect (Spirc). Keeps a failing audio output from taking the app down and hears the key refusals librespot only logs. |
-| `crates/descant-spotify` | Your library, Home and search, through the same session librespot uses (Spotify's Web API refuses clients like this one). Pairing and the keyring. |
-| `src/` | The GTK app. |
+| `crates/descant-spotify` | Your library, Home, search and podcasts, through the same session librespot uses (Spotify's Web API refuses clients like this one). Pairing and the keyring. |
+| `src/` | The GTK app, and MPRIS. |
 
 ## Thanks
 
