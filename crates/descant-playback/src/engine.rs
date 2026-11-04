@@ -421,7 +421,9 @@ fn track_info(item: &AudioItem) -> TrackInfo {
             artists.iter().cloned().collect(),
             album.clone().unwrap_or_default(),
         ),
-        _ => (vec![], String::new()),
+        // Sent here over Connect: the show stands where the artists would,
+        // in the bar and in the media controls.
+        UniqueFields::Episode { show_name, .. } => (vec![show_name.clone()], String::new()),
     };
     let mut covers: Vec<Cover> = item
         .covers
@@ -456,6 +458,38 @@ mod tests {
             uri: s.to_string(),
             provider: "context".into(),
         }
+    }
+
+    fn episode(show: &str) -> AudioItem {
+        let id = "3n3Ppam7vgaVa1iaRUc9Lp";
+        AudioItem {
+            track_id: SpotifyUri::Episode {
+                id: SpotifyId::from_base62(id).unwrap(),
+            },
+            uri: format!("spotify:episode:{id}"),
+            files: Default::default(),
+            name: "Episode 12".into(),
+            covers: vec![],
+            language: vec![],
+            duration_ms: 1_800_000,
+            is_explicit: false,
+            availability: Ok(()),
+            alternatives: None,
+            unique_fields: UniqueFields::Episode {
+                description: String::new(),
+                publish_time: librespot_core::date::Date::now_utc(),
+                show_name: show.into(),
+            },
+        }
+    }
+
+    #[test]
+    fn an_episode_names_its_show_where_a_track_names_its_artists() {
+        let info = track_info(&episode("The Show"));
+        assert_eq!(info.title, "Episode 12");
+        assert_eq!(info.artists, ["The Show"]);
+        assert_eq!(info.artist_line(), "The Show");
+        assert!(info.artist_uris.is_empty(), "a show is no artist to open");
     }
 
     fn loading(s: &str) -> PlayerEvent {

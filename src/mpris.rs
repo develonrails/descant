@@ -99,7 +99,7 @@ pub struct Actions {
 
 /// The track in the bar, as far as seeking in it needs.
 struct Shown {
-    /// Its MPRIS track id; episodes have none.
+    /// Its MPRIS track id; local files have none.
     id: Option<String>,
     duration_ms: u32,
 }
@@ -537,10 +537,15 @@ fn playback_status(status: &Status) -> &'static str {
     }
 }
 
-/// An MPRIS track id is a D-Bus object path; Spotify ids are base62, so they fit.
+/// An MPRIS track id is a D-Bus object path; Spotify ids are base62, so they
+/// fit. Tracks and episodes (played here over Connect) get one; local files,
+/// whose uris are not ids, do not.
 fn track_id(uri: &str) -> Option<String> {
-    let id = uri.strip_prefix("spotify:track:")?;
-    let path = format!("/io/github/develonrails/Descant/track/{id}");
+    let (kind, id) = uri.strip_prefix("spotify:")?.split_once(':')?;
+    if !matches!(kind, "track" | "episode") {
+        return None;
+    }
+    let path = format!("/io/github/develonrails/Descant/{kind}/{id}");
     glib::Variant::is_object_path(&path).then_some(path)
 }
 
@@ -575,8 +580,11 @@ mod tests {
 
     #[test]
     fn spotify_ids_make_valid_track_paths() {
-        assert!(track_id("spotify:track:3n3Ppam7vgaVa1iaRUc9Lp").is_some());
-        assert!(track_id("spotify:episode:3n3Ppam7vgaVa1iaRUc9Lp").is_none());
+        let track = track_id("spotify:track:3n3Ppam7vgaVa1iaRUc9Lp").unwrap();
+        let episode = track_id("spotify:episode:3n3Ppam7vgaVa1iaRUc9Lp").unwrap();
+        assert_ne!(track, episode, "the same id names two different things");
+        assert!(track_id("spotify:show:3n3Ppam7vgaVa1iaRUc9Lp").is_none());
+        assert!(track_id("spotify:local:a:b:c:180").is_none());
     }
 
     #[test]

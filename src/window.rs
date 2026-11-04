@@ -1172,6 +1172,10 @@ impl Ui {
 
     /// The heart follows whether the playing track is liked.
     fn show_like(&self) {
+        // Only songs go in Liked Songs: with an episode sent here over
+        // Connect, or nothing playing, the heart has nothing to do.
+        self.like
+            .set_sensitive(self.current.borrow().starts_with("spotify:track:"));
         let liked = self
             .library
             .liked
