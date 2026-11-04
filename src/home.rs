@@ -41,6 +41,8 @@ pub fn page(nav: &Nav) -> adw::NavigationPage {
             .build(),
     );
     body.append(&tiles(nav));
+    let continuing = section_slot(&body, "Continue listening");
+    let new_episodes = section_slot(&body, "New episodes");
 
     // Placeholders in their final order, filled when their data arrives.
     let made = section_slot(&body, "Made for you");
@@ -53,6 +55,7 @@ pub fn page(nav: &Nav) -> adw::NavigationPage {
         .hscrollbar_policy(gtk::PolicyType::Never)
         .vexpand(true)
         .build();
+    crate::podcasts::home_shelves(nav, &continuing, &new_episodes);
     let page = adw::NavigationPage::builder()
         .title("Home")
         .child(&with_header(&scroller))
@@ -250,6 +253,7 @@ fn top_songs(nav: &Nav, tracks: &[TrackInfo]) -> gtk::ListBox {
             nav.send(Command::PlayTracks {
                 tracks: uris.clone(),
                 start: i,
+                position_ms: 0,
             });
         });
         list.append(&row);

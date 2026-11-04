@@ -35,6 +35,26 @@ pub const USER_TOP_CONTENT: Operation = Operation {
     hash: "61b7353d3625780022dbc63d459eb64cd609e7e5e2a820f9160d65030efe2e15",
 };
 
+/// Podcasts, from the web player itself (open.spotify.com, 4 November 2026;
+/// spike S7). Shows only: 19 KB, where the current searchDesktop sends
+/// 158 KB to add them; the search above already brings the episodes.
+pub const SEARCH_PODCASTS: Operation = Operation {
+    name: "searchPodcasts",
+    hash: "0195d9f61b43606d490bca64c3456e3593528cea6cc05c7e822c7c42beed0f4e",
+};
+
+/// A show's page: name, maker, description and whether it is followed.
+pub const SHOW_METADATA: Operation = Operation {
+    name: "queryShowMetadataV2",
+    hash: "b475447846f37cc426add800b995a7859c169c53c72b62de6338c0c40a5dacea",
+};
+
+/// A page of a show's episodes, newest first, each with the listener's place.
+pub const PODCAST_EPISODES: Operation = Operation {
+    name: "queryPodcastEpisodes",
+    hash: "3539d746cf882f3909660de40b4ef472b3f5893a0761d617c282541de5d412c5",
+};
+
 const ENDPOINT: &str = "https://api-partner.spotify.com/pathfinder/v2/query";
 
 /// Runs `operation` with `variables` and returns the response's `data`.

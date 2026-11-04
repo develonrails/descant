@@ -244,9 +244,14 @@ impl LibrespotEngine {
             Command::Pause => self.spirc.pause(),
             Command::Seek(ms) => self.spirc.set_position_ms(*ms),
             Command::Skip(n) => self.skip(*n),
-            Command::PlayTracks { tracks, start } => {
+            Command::PlayTracks {
+                tracks,
+                start,
+                position_ms,
+            } => {
                 let options = LoadRequestOptions {
                     start_playing: true,
+                    seek_to: *position_ms,
                     playing_track: Some(PlayingTrack::Index(*start as u32)),
                     ..Default::default()
                 };
@@ -275,7 +280,11 @@ impl LibrespotEngine {
                     playing_track: start_track.clone().map(PlayingTrack::Uri),
                     ..Default::default()
                 };
-                let request = if context.starts_with("spotify:track:") {
+                // A single track or episode is a list of one; anything else
+                // is a context Spotify knows by its URI.
+                let request = if context.starts_with("spotify:track:")
+                    || context.starts_with("spotify:episode:")
+                {
                     LoadRequest::from_tracks(vec![context.clone()], options)
                 } else {
                     LoadRequest::from_context_uri(context.clone(), options)

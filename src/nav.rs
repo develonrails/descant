@@ -33,6 +33,11 @@ pub enum Destination {
         name: String,
         covers: Vec<Cover>,
     },
+    /// A podcast.
+    Show {
+        uri: String,
+        name: String,
+    },
 }
 
 /// Something pages tell the window.
@@ -61,6 +66,11 @@ pub struct Library {
     pub home: HomeShelves,
     /// Who is signed in, once Preferences asked.
     pub profile: RefCell<Option<Profile>>,
+    /// Followed shows and Your Episodes, by URI, for the buttons that change them.
+    pub followed_shows: RefCell<HashSet<String>>,
+    pub saved_episodes: RefCell<HashSet<String>>,
+    /// Whether those two were read: once per login, when podcasts first show.
+    pub podcasts_read: std::cell::Cell<bool>,
 }
 
 #[derive(Default)]
@@ -68,6 +78,8 @@ pub struct HomeShelves {
     pub made_for_you: Fresh<Vec<PlaylistSummary>>,
     pub recently_played: Fresh<Vec<Item>>,
     pub top: Fresh<Top>,
+    /// The newest episodes of followed shows: Continue listening and New episodes.
+    pub episodes: Fresh<Vec<descant_spotify::podcasts::Episode>>,
 }
 
 /// A value and when it was fetched.
@@ -125,9 +137,13 @@ impl Library {
         self.collection.take();
         self.playlists.take();
         self.profile.take();
+        self.followed_shows.take();
+        self.saved_episodes.take();
+        self.podcasts_read.set(false);
         self.home.made_for_you.clear();
         self.home.recently_played.clear();
         self.home.top.clear();
+        self.home.episodes.clear();
     }
 }
 
@@ -169,6 +185,82 @@ impl Nav {
             .borrow()
             .clone()
             .unwrap_or_else(|| self.initial.clone())
+    }
+
+    /// Reads which shows are followed and which episodes saved, the first
+    /// time a page with podcasts needs it; listeners who never open one never
+    /// pay for it.
+    pub async fn podcast_state(&self) {
+        if self.library.podcasts_read.replace(true) {
+            return;
+        }
+        let session = self.session();
+        let read = crate::runtime()
+            .spawn(async move {
+                use descant_spotify::podcasts::saved_uris;
+                (
+                    saved_uris(&session, "show").await,
+                    saved_uris(&session, "listenlater").await,
+                )
+            })
+            .await;
+        match read {
+            Ok((Ok(shows), Ok(episodes))) => {
+                *self.library.followed_shows.borrow_mut() = shows.into_iter().collect();
+                *self.library.saved_episodes.borrow_mut() = episodes.into_iter().collect();
+            }
+            _ => self.library.podcasts_read.set(false), // try again next time
+        }
+    }
+
+    /// Follows or unfollows a show.
+    pub async fn set_followed(&self, uri: String, followed: bool) -> bool {
+        let session = self.session();
+        let u = uri.clone();
+        let done = crate::runtime()
+            .spawn(async move { descant_spotify::edit::set_followed(&session, &u, followed).await })
+            .await;
+        let ok = matches!(done, Ok(Ok(())));
+        if ok {
+            let mut shows = self.library.followed_shows.borrow_mut();
+            if followed {
+                shows.insert(uri);
+            } else {
+                shows.remove(&uri);
+            }
+        }
+        self.toast(match (ok, followed) {
+            (true, true) => "Following",
+            (true, false) => "No longer following",
+            (false, _) => "Spotify did not take that change",
+        });
+        ok
+    }
+
+    /// Puts an episode in Your Episodes or takes it out.
+    pub async fn set_saved_episode(&self, uri: String, saved: bool) -> bool {
+        let session = self.session();
+        let u = uri.clone();
+        let done = crate::runtime()
+            .spawn(
+                async move { descant_spotify::edit::set_saved_episode(&session, &u, saved).await },
+            )
+            .await;
+        let ok = matches!(done, Ok(Ok(())));
+        if ok {
+            let mut episodes = self.library.saved_episodes.borrow_mut();
+            if saved {
+                episodes.insert(uri);
+            } else {
+                episodes.remove(&uri);
+            }
+        }
+        self.toast(match (ok, saved) {
+            (true, true) => "Saved to Your Episodes",
+            (true, false) => "Removed from Your Episodes",
+            (false, _) => "Spotify did not take that change",
+        });
+        ok
     }
 
     /// Likes or unlikes a track, and tells everyone.

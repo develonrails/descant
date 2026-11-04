@@ -12,6 +12,10 @@ pub enum Kind {
     Album,
     Playlist,
     Artist,
+    /// A podcast.
+    Show,
+    /// One episode of a podcast.
+    Episode,
 }
 
 impl Kind {
@@ -21,6 +25,8 @@ impl Kind {
             Kind::Album => "album",
             Kind::Playlist => "playlist",
             Kind::Artist => "artist",
+            Kind::Show => "show",
+            Kind::Episode => "episode",
         }
     }
 
@@ -30,6 +36,8 @@ impl Kind {
             "album" => Some(Kind::Album),
             "playlist" => Some(Kind::Playlist),
             "artist" => Some(Kind::Artist),
+            "show" => Some(Kind::Show),
+            "episode" => Some(Kind::Episode),
             _ => None,
         }
     }
@@ -72,7 +80,7 @@ impl SpotifyRef {
 
     /// Whether this is a context (something with tracks to play through).
     pub fn is_context(&self) -> bool {
-        self.kind != Kind::Track
+        !matches!(self.kind, Kind::Track | Kind::Episode)
     }
 }
 
@@ -137,10 +145,35 @@ mod tests {
             parsed("https://example.com/track/3n3Ppam7vgaVa1iaRUc9Lp"),
             None
         );
-        assert_eq!(parsed("spotify:show:3n3Ppam7vgaVa1iaRUc9Lp"), None); // podcasts are out of scope
         assert_eq!(parsed("spotify:track:tooshort"), None);
         assert_eq!(parsed("spotify:track:3n3Ppam7vgaVa1iaRUc9L!"), None);
         assert_eq!(parsed("https://open.spotify.com/user/someone"), None);
+    }
+
+    #[test]
+    fn shows_and_episodes_are_items_too() {
+        assert_eq!(
+            parsed(&format!("https://open.spotify.com/show/{ID}?si=x")),
+            Some(format!("spotify:show:{ID}"))
+        );
+        assert_eq!(
+            parsed(&format!("spotify:episode:{ID}")),
+            Some(format!("spotify:episode:{ID}"))
+        );
+    }
+
+    #[test]
+    fn an_episode_plays_on_its_own_and_a_show_is_a_context() {
+        assert!(
+            !SpotifyRef::parse(&format!("spotify:episode:{ID}"))
+                .unwrap()
+                .is_context()
+        );
+        assert!(
+            SpotifyRef::parse(&format!("spotify:show:{ID}"))
+                .unwrap()
+                .is_context()
+        );
     }
 
     #[test]

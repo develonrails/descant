@@ -6,6 +6,7 @@ mod home;
 mod images;
 mod mpris;
 mod nav;
+mod podcasts;
 mod preferences;
 mod qr;
 mod search;
@@ -50,6 +51,9 @@ const CSS: &str = "
   border-radius: 6px;
 }
 .home-tile { padding: 0; min-height: 56px; }
+.skip-seconds { font-size: 7pt; font-weight: 800; margin-top: 2px; }
+.play-large { min-width: 42px; min-height: 42px; }
+.continue-card { padding: 10px; }
 .progress-edge { min-height: 3px; padding: 0; margin: 0; }
 .progress-edge trough { min-height: 3px; border-radius: 0; padding: 0; margin: 0; }
 .progress-edge highlight { border-radius: 0; }
@@ -100,10 +104,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_hearts_are_built_in_where_gtk_looks_for_icons() {
+    fn the_own_icons_are_built_in_where_gtk_looks_for_icons() {
         register_resources();
         let base = APP_ID.replace('.', "/");
-        for icon in [widgets::LIKED_ICON, widgets::LIKE_ICON] {
+        for icon in [
+            widgets::LIKED_ICON,
+            widgets::LIKE_ICON,
+            widgets::SKIP_BACK_ICON,
+            widgets::SKIP_FORWARD_ICON,
+        ] {
             let path = format!("/{base}/icons/scalable/actions/{icon}.svg");
             let found = gtk::gio::resources_lookup_data(&path, gtk::gio::ResourceLookupFlags::NONE);
             assert!(found.is_ok(), "{path} is not built in");

@@ -16,6 +16,8 @@ pub struct SearchResults {
     pub artists: Vec<ArtistSummary>,
     pub albums: Vec<AlbumSummary>,
     pub playlists: Vec<PlaylistSummary>,
+    /// Episodes come along in the same answer; it does not name their show.
+    pub episodes: Vec<crate::podcasts::Episode>,
 }
 
 impl SearchResults {
@@ -24,6 +26,7 @@ impl SearchResults {
             && self.artists.is_empty()
             && self.albums.is_empty()
             && self.playlists.is_empty()
+            && self.episodes.is_empty()
     }
 }
 
@@ -55,6 +58,9 @@ pub(crate) fn parse(data: &Value) -> SearchResults {
         artists: items(&search["artists"]).filter_map(net::artist).collect(),
         albums: items(&search["albums"]).filter_map(album).collect(),
         playlists: items(&search["playlists"]).filter_map(playlist).collect(),
+        episodes: items(&search["episodes"])
+            .filter_map(|i| crate::podcasts::episode(&i["episode"]))
+            .collect(),
     }
 }
 
@@ -112,6 +118,12 @@ mod tests {
                 "date": {"year": 1997}}]},
             "artists": {"items": [{"uri": "spotify:artist:a1", "profile": {"name": "Radiohead"},
                 "visuals": {"avatarImage": {"sources": [{"url": "https://i.scdn.co/image/p", "width": 320}]}}}]},
+            "episodes": {"items": [{"episode": {"uri": "spotify:episode:e1",
+                "name": "A Landslide Victory for Democrats",
+                "duration": {"totalMilliseconds": 2079973},
+                "releaseDate": {"isoString": "2026-11-04T10:51:00Z"},
+                "podcast": {"coverArt": {"sources": []}},
+                "coverArt": {"sources": [{"url": "https://i.scdn.co/image/e", "width": 64}]}}}]},
             "playlists": {"items": [{"uri": "spotify:playlist:p1", "name": "This Is Radiohead",
                 "owner": {"name": "Spotify"},
                 "images": {"items": [{"sources": [{"url": "https://i.scdn.co/image/q", "width": null}]}]}}]}
@@ -137,6 +149,17 @@ mod tests {
             t.covers.iter().map(|c| c.width).collect::<Vec<_>>(),
             vec![64, 640]
         );
+    }
+
+    #[test]
+    fn episodes_come_along_without_their_show() {
+        let r = parse(&fixture());
+        assert_eq!(r.episodes.len(), 1);
+        let e = &r.episodes[0];
+        assert_eq!(e.name, "A Landslide Victory for Democrats");
+        assert_eq!(e.released, Some((2026, 11, 4)));
+        assert_eq!(e.show, "", "this answer does not name the show");
+        assert!(!r.is_empty());
     }
 
     #[test]

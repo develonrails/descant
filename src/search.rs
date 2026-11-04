@@ -15,6 +15,8 @@ use crate::{
 
 /// Results per kind.
 const LIMIT: u32 = 10;
+/// Shows found: fewer, after the music.
+const PODCASTS: u32 = 6;
 
 pub fn page(nav: &Nav) -> adw::NavigationPage {
     let entry = gtk::SearchEntry::builder()
@@ -88,16 +90,33 @@ pub fn page(nav: &Nav) -> adw::NavigationPage {
             generation.clone(),
         );
         glib::spawn_future_local(async move {
-            let session = nav.session();
-            let found = runtime()
-                .spawn(async move { search::search(&session, &term, LIMIT).await })
-                .await;
+            // Music and podcasts are two searches, sent together.
+            let (session, s, t) = (nav.session(), nav.session(), term.clone());
+            let music =
+                runtime().spawn(async move { search::search(&session, &term, LIMIT).await });
+            let shows = runtime().spawn(async move {
+                descant_spotify::podcasts::search_shows(&s, &t, PODCASTS).await
+            });
+            let (found, shows) = (music.await, shows.await);
             if generation.get() != current {
                 return; // the user typed on
             }
+            let shows = match shows {
+                Ok(Ok(shows)) => shows,
+                Ok(Err(e)) => {
+                    log::warn!("podcast search: {e}");
+                    Default::default()
+                }
+                Err(_) => Default::default(),
+            };
             match found {
-                Ok(Ok(found)) if !found.is_empty() => {
+                Ok(Ok(found)) if !found.is_empty() || !shows.is_empty() => {
+                    // Episode rows show whether they are saved.
+                    if !found.episodes.is_empty() {
+                        nav.podcast_state().await;
+                    }
                     show(&nav, &results, &found);
+                    crate::podcasts::search_results(&nav, &results, &shows, &found.episodes);
                     stack.set_visible_child_name("results");
                 }
                 Ok(Err(e)) => {
@@ -124,6 +143,8 @@ pub fn page(nav: &Nav) -> adw::NavigationPage {
                 name,
                 covers: vec![],
             }),
+            Kind::Show => links.open(Destination::Show { uri, name }),
+            Kind::Episode => links.play(&uri, None),
         }
         entry.set_text("");
     });

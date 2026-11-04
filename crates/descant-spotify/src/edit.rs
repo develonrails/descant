@@ -190,13 +190,22 @@ async fn rows(session: &Session, id: &str) -> Result<(Vec<u8>, Vec<String>), Err
 
 /// Saves a track to, or removes it from, Liked Songs.
 pub async fn set_liked(session: &Session, uri: &str, liked: bool) -> Result<(), Error> {
-    let body = write_request(
-        &session.username(),
-        "collection",
-        uri,
-        liked,
-        now_ms() / 1000,
-    );
+    save_in(session, "collection", uri, liked).await
+}
+
+/// Follows or unfollows a show.
+pub async fn set_followed(session: &Session, show: &str, followed: bool) -> Result<(), Error> {
+    save_in(session, "show", show, followed).await
+}
+
+/// Puts an episode in Your Episodes, or takes it out.
+pub async fn set_saved_episode(session: &Session, episode: &str, saved: bool) -> Result<(), Error> {
+    save_in(session, "listenlater", episode, saved).await
+}
+
+/// Adds `uri` to a collection set, or removes it.
+async fn save_in(session: &Session, set: &str, uri: &str, saved: bool) -> Result<(), Error> {
+    let body = write_request(&session.username(), set, uri, saved, now_ms() / 1000);
     post_once(session, "/collection/v2/write", COLLECTION_TYPE, body)
         .await
         .map(|_| ())

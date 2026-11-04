@@ -5,5 +5,7 @@
   <gresource prefix="/io/github/develonrails/Descant/icons/scalable/actions">
     <file>heart-filled-symbolic.svg</file>
     <file>heart-outline-symbolic.svg</file>
+    <file>skip-back-circle-symbolic.svg</file>
+    <file>skip-forward-circle-symbolic.svg</file>
   </gresource>
 </gresources>

@@ -30,9 +30,9 @@ GNOME Human Interface Guidelines, adapts to narrow windows, keeps its
 settings in GSettings, works with media keys and the shell's media controls
 (MPRIS), and ships as a Flatpak.
 
-**Focused.** Playlists, search, discovery, your library and playback, done
-well. No skins, no visualizers, no friend feed, no news, no podcasts. A
-smaller app has fewer places for bugs to hide.
+**Focused.** Playlists, podcasts, search, discovery, your library and
+playback, done well. No skins, no visualizers, no friend feed, no news, no
+audiobooks. A smaller app has fewer places for bugs to hide.
 
 **Private.** Descant has no servers, no telemetry and no developer key of its
 own. It talks to Spotify with your own session and nothing else. Your sign-in
@@ -41,9 +41,12 @@ lives in the system keyring, and audio is streamed, never stored.
 ## Features
 
 - **Sign in with your phone:** scan a QR code, confirm in the Spotify app.
-- **Home:** quick tiles, Made for You, Recently Played, your top artists and
-  songs.
-- **Search** for songs, artists, albums and playlists, or paste a Spotify link.
+- **Home:** quick tiles, Continue listening and New episodes, Made for You,
+  Recently Played, your top artists and songs.
+- **Search** for songs, artists, albums, playlists, podcasts and episodes, or
+  paste a Spotify link.
+- **Podcasts:** follow shows, save episodes to Your Episodes, and go on where
+  you left off; jump back 15 seconds or ahead 30.
 - **Your library:** Liked Songs (newest first), saved albums, followed
   artists and your playlists. Like tracks, create playlists, add and remove
   tracks.

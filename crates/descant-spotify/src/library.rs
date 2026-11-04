@@ -198,7 +198,7 @@ async fn collection_page(
 }
 
 /// Every saved item of a collection set, all pages.
-async fn collection_items(
+pub(crate) async fn collection_items(
     session: &Session,
     set: &str,
 ) -> Result<Vec<crate::collection::CollectionItem>, Error> {
@@ -317,7 +317,7 @@ pub fn next_token(page: &PageResponse, current: &str) -> Option<String> {
     (!next.is_empty() && next != current).then(|| next.to_string())
 }
 
-fn gid_uri(kind: &str, gid: &[u8]) -> Option<String> {
+pub(crate) fn gid_uri(kind: &str, gid: &[u8]) -> Option<String> {
     SpotifyId::from_raw(gid)
         .ok()
         .map(|id| format!("spotify:{kind}:{}", id.to_base62()))

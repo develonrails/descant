@@ -5,7 +5,10 @@
 
 use adw::prelude::*;
 use descant_core::track::Cover;
-use descant_spotify::library::{AlbumSummary, ArtistSummary, PlaylistSummary};
+use descant_spotify::{
+    library::{AlbumSummary, ArtistSummary, PlaylistSummary},
+    podcasts::ShowSummary,
+};
 use gtk::{gio, glib};
 
 use crate::{
@@ -65,10 +68,22 @@ impl Card {
         }
     }
 
+    pub fn show(show: &ShowSummary) -> Card {
+        Card {
+            uri: show.uri.clone(),
+            title: show.name.clone(),
+            subtitle: show.publisher.clone(),
+            covers: show.covers.clone(),
+            round: false,
+        }
+    }
+
     pub fn destination(&self) -> Destination {
         let (uri, name) = (self.uri.clone(), self.title.clone());
         if self.uri.starts_with("spotify:artist:") {
             Destination::Artist { uri, name }
+        } else if self.uri.starts_with("spotify:show:") {
+            Destination::Show { uri, name }
         } else if self.uri.starts_with("spotify:playlist:") {
             Destination::Playlist {
                 uri,

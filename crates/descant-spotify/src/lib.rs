@@ -16,6 +16,7 @@ pub mod home;
 pub mod library;
 pub mod pairing;
 pub mod pathfinder;
+pub mod podcasts;
 pub mod profile;
 pub mod search;
 pub mod store;

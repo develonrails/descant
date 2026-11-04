@@ -29,11 +29,14 @@ use crate::{
     home, images,
     mpris::{self, Mpris},
     nav::{Destination, Event, Library, Nav},
+    podcasts,
     qr::QrView,
     runtime, search,
     settings::{self, KEEP_PLAYING, VOLUME},
     tracks::{Source, TrackPage},
-    widgets::{LIKE_ICON, LIKED_ICON, cover_image, pick, with_header},
+    widgets::{
+        LIKE_ICON, LIKED_ICON, SKIP_BACK_ICON, SKIP_FORWARD_ICON, cover_image, pick, with_header,
+    },
 };
 
 /// Cover art in the now-playing bar and in the sidebar, in logical pixels.
@@ -47,6 +50,8 @@ const PLACES: &[(&str, &str, &str)] = &[
     ("liked", "Liked Songs", LIKED_ICON),
     ("albums", "Albums", "media-optical-symbolic"),
     ("artists", "Artists", "avatar-default-symbolic"),
+    ("podcasts", "Podcasts", "audio-input-microphone-symbolic"),
+    ("episodes", "Your Episodes", "user-bookmarks-symbolic"),
 ];
 
 pub fn activate(app: &adw::Application) {
@@ -88,6 +93,11 @@ struct Ui {
     /// The session, liked tracks and the user's playlists, shared with every page.
     library: Rc<Library>,
     like: gtk::Button,
+    previous: gtk::Button,
+    next: gtk::Button,
+    /// For an episode, in place of previous and next: 15 s back, 30 s ahead.
+    back: gtk::Button,
+    forward: gtk::Button,
     shuffle: gtk::ToggleButton,
     repeat: gtk::Button,
     repeat_mode: std::cell::Cell<descant_core::supervisor::Repeat>,
@@ -299,6 +309,8 @@ impl Ui {
         play_pause.remove_css_class("flat");
         play_pause.add_css_class("suggested-action");
         let next = round_button("media-skip-forward-symbolic", "Next", "win.next");
+        let back = skip_button(SKIP_BACK_ICON, "15", "Back 15 Seconds", "win.back");
+        let forward = skip_button(SKIP_FORWARD_ICON, "30", "Forward 30 Seconds", "win.forward");
         let shuffle = gtk::ToggleButton::builder()
             .icon_name("media-playlist-shuffle-symbolic")
             .tooltip_text("Shuffle")
@@ -338,9 +350,11 @@ impl Ui {
         playing.append(&time);
         let transport = gtk::Box::builder().spacing(12).build();
         transport.append(&shuffle);
+        transport.append(&back);
         transport.append(&previous);
         transport.append(&play_pause);
         transport.append(&next);
+        transport.append(&forward);
         transport.append(&repeat);
         let aside = gtk::Box::builder().spacing(12).build();
         aside.append(&like);
@@ -419,6 +433,10 @@ impl Ui {
             controller: RefCell::new(None),
             library: Rc::default(),
             like,
+            previous,
+            next,
+            back,
+            forward,
             shuffle,
             repeat,
             repeat_mode: Default::default(),
@@ -510,6 +528,8 @@ impl Ui {
         action("queue", self.clone(), |ui| ui.open_queue());
         action("like", self.clone(), |ui| ui.toggle_like());
         action("repeat", self.clone(), |ui| ui.cycle_repeat());
+        action("back", self.clone(), |ui| ui.jump(-15_000));
+        action("forward", self.clone(), |ui| ui.jump(30_000));
         action("mute", self.clone(), |ui| ui.toggle_mute());
         let ui = self.clone();
         self.volume
@@ -641,6 +661,8 @@ impl Ui {
                         Some(albums.iter().map(Card::album).collect())
                     })
                 }
+                "podcasts" => podcasts::podcasts_page(&nav),
+                "episodes" => podcasts::saved_page(&nav),
                 "artists" => {
                     let session = nav.session();
                     grid::grid_page(&nav, "Artists", "No Followed Artists", async move {
@@ -666,6 +688,7 @@ impl Ui {
             Destination::Playlist { uri, name, covers } => {
                 self.track_page(&nav, Source::Playlist { uri }, &name, &covers)
             }
+            Destination::Show { uri, name } => podcasts::show_page(&nav, &uri, &name),
         };
         self.content.push(&page);
     }
@@ -1144,6 +1167,28 @@ impl Ui {
         }
     }
 
+    /// Moves the place in the playing episode by `by_ms`, within the episode.
+    fn jump(&self, by_ms: i64) {
+        let duration = i64::from(self.duration_ms.get());
+        let target = (i64::from(self.position_ms()) + by_ms).clamp(0, duration.max(0));
+        self.send(Command::Seek(target as u32));
+    }
+
+    /// Episodes jump back and ahead; songs go to the previous and next, with
+    /// shuffle and repeat beside them.
+    fn show_transport(&self, episode: bool) {
+        for widget in [
+            self.previous.upcast_ref::<gtk::Widget>(),
+            self.next.upcast_ref(),
+            self.shuffle.upcast_ref(),
+            self.repeat.upcast_ref(),
+        ] {
+            widget.set_visible(!episode);
+        }
+        self.back.set_visible(episode);
+        self.forward.set_visible(episode);
+    }
+
     /// Off → the whole context → this track → off.
     fn cycle_repeat(&self) {
         self.set_repeat(self.repeat_mode.get().next());
@@ -1252,6 +1297,7 @@ impl Ui {
         if let Some(mpris) = &*self.mpris.borrow() {
             mpris.track(&info);
         }
+        self.show_transport(info.uri.starts_with("spotify:episode:"));
         self.title.set_label(&info.title);
         let artists = info.artist_line();
         if !self.artist.has_css_class("accent") {
@@ -1483,6 +1529,29 @@ fn section_header(title: &str) -> gtk::ListBoxRow {
         )
         .selectable(false)
         .activatable(false)
+        .build()
+}
+
+/// A jump of so many seconds: a circling arrow with the number inside it.
+fn skip_button(icon: &str, seconds: &str, tooltip: &str, action: &str) -> gtk::Button {
+    let overlay = gtk::Overlay::builder()
+        .child(&gtk::Image::builder().icon_name(icon).pixel_size(24).build())
+        .build();
+    overlay.add_overlay(
+        &gtk::Label::builder()
+            .label(seconds)
+            .halign(gtk::Align::Center)
+            .valign(gtk::Align::Center)
+            .css_classes(["skip-seconds"])
+            .build(),
+    );
+    gtk::Button::builder()
+        .child(&overlay)
+        .tooltip_text(tooltip)
+        .action_name(action)
+        .valign(gtk::Align::Center)
+        .css_classes(["circular", "flat"])
+        .visible(false)
         .build()
 }
 

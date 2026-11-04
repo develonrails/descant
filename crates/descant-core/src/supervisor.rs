@@ -30,10 +30,12 @@ pub enum Command {
     Repeat(Repeat),
     /// Volume on Connect's 0–65535 scale; never held back.
     SetVolume(u16),
-    /// Play a list of tracks (top songs), starting at `start`.
+    /// Play a list of tracks (top songs) or episodes, starting at `start`,
+    /// `position_ms` into it: where an episode was left off, else 0.
     PlayTracks {
         tracks: Vec<TrackUri>,
         start: usize,
+        position_ms: u32,
     },
     /// Play a context (album, playlist, artist, or a single track).
     Load {
@@ -1145,6 +1147,7 @@ mod tests {
         let play = Command::PlayTracks {
             tracks: vec![T1.into(), T2.into()],
             start: 1,
+            position_ms: 0,
         };
         let mut s = sup();
         assert_eq!(

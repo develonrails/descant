@@ -5,6 +5,7 @@
 pub mod equalizer;
 pub mod key;
 pub mod link;
+pub mod podcast;
 pub mod supervisor;
 pub mod time;
 pub mod track;
