@@ -1,0 +1,57 @@
+[package]
+name = "descant"
+description = "A small, fast, native GNOME client for Spotify"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+descant-core = { path = "crates/descant-core" }
+descant-playback = { path = "crates/descant-playback" }
+descant-spotify = { path = "crates/descant-spotify" }
+librespot-core = { workspace = true }
+gtk = { package = "gtk4", version = "0.11", features = ["v4_20"] }
+adw = { package = "libadwaita", version = "0.9", features = ["v1_8"] }
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "fs"] }
+qrcode = { version = "0.14", default-features = false }
+log = "0.4"
+
+[profile.release]
+# One codegen unit and full LTO: a third smaller binary (17.7 → 12.3 MB),
+# so less to load and map, for a slower release build.
+lto = "fat"
+codegen-units = 1
+strip = true
+
+[workspace]
+members = ["crates/descant-core", "crates/descant-playback", "crates/descant-spotify"]
+resolver = "3"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+authors = ["Mitchell de Jong"]
+repository = "https://github.com/develonrails/descant"
+rust-version = "1.92"
+
+# librespot's dev branch, pinned: it has fixes 0.8.0 lacks.
+[workspace.dependencies]
+librespot-core = { git = "https://github.com/librespot-org/librespot", rev = "99b6088bf3ea028f90192676ac1a337fa4b2ed12", default-features = false, features = ["native-tls"] }
+librespot-playback = { git = "https://github.com/librespot-org/librespot", rev = "99b6088bf3ea028f90192676ac1a337fa4b2ed12", default-features = false, features = ["native-tls", "pulseaudio-backend"] }
+librespot-connect = { git = "https://github.com/librespot-org/librespot", rev = "99b6088bf3ea028f90192676ac1a337fa4b2ed12", default-features = false, features = ["native-tls"] }
+librespot-metadata = { git = "https://github.com/librespot-org/librespot", rev = "99b6088bf3ea028f90192676ac1a337fa4b2ed12", default-features = false, features = ["native-tls"] }
+librespot-oauth = { git = "https://github.com/librespot-org/librespot", rev = "99b6088bf3ea028f90192676ac1a337fa4b2ed12", default-features = false, features = ["native-tls"] }
+librespot-protocol = { git = "https://github.com/librespot-org/librespot", rev = "99b6088bf3ea028f90192676ac1a337fa4b2ed12" }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }

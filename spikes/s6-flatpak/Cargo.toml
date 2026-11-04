@@ -1,0 +1,20 @@
+[package]
+name = "descant-spike"
+version = "0.0.0"
+edition = "2024"
+publish = false
+description = "Spike S6: GTK4 + libadwaita + librespot (pulseaudio) built and run as a Flatpak"
+
+[workspace]
+
+[dependencies]
+gtk = { package = "gtk4", version = "0.11", features = ["v4_20"] }
+adw = { package = "libadwaita", version = "0.9", features = ["v1_8"] }
+librespot-core = { git = "https://github.com/librespot-org/librespot", rev = "99b6088bf3ea028f90192676ac1a337fa4b2ed12", default-features = false, features = ["native-tls"] }
+librespot-playback = { git = "https://github.com/librespot-org/librespot", rev = "99b6088bf3ea028f90192676ac1a337fa4b2ed12", default-features = false, features = ["native-tls", "pulseaudio-backend"] }
+librespot-metadata = { git = "https://github.com/librespot-org/librespot", rev = "99b6088bf3ea028f90192676ac1a337fa4b2ed12", default-features = false, features = ["native-tls"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
+
+[profile.release]
+lto = "thin"
+strip = true

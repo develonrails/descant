@@ -1,0 +1,16 @@
+[package]
+name = "s3-data"
+version = "0.0.0"
+edition = "2024"
+publish = false
+description = "Spike S3/S4: which data sources answer with a token derived from the librespot session?"
+
+[workspace]
+
+[dependencies]
+librespot-core = { git = "https://github.com/librespot-org/librespot", rev = "99b6088bf3ea028f90192676ac1a337fa4b2ed12", default-features = false, features = ["native-tls"] }
+librespot-oauth = { git = "https://github.com/librespot-org/librespot", rev = "99b6088bf3ea028f90192676ac1a337fa4b2ed12", default-features = false, features = ["native-tls"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
+reqwest = { version = "0.12", default-features = false, features = ["native-tls", "json"] }
+serde_json = "1"
+http = "1"

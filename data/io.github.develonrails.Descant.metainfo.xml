@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.develonrails.Descant</id>
+
+  <name>Descant</name>
+  <summary>A small, fast player for Spotify</summary>
+
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+
+  <developer id="io.github.develonrails">
+    <name>Mitchell de Jong</name>
+  </developer>
+
+  <description>
+    <p>
+      Descant plays your Spotify music in a native GNOME window that starts fast
+      and stays light. No skins, no visualizers, no feeds: your playlists,
+      search and discovery, and music that keeps playing.
+    </p>
+    <p>
+      Log in by scanning a code with the phone that has Spotify on it.
+      Descant also shows up as a Spotify Connect device, so your phone can
+      control it.
+    </p>
+    <ul>
+      <li>Home, search, Liked Songs, albums, artists and your playlists</li>
+      <li>Picks up where you left off</li>
+      <li>A ten-band equalizer with presets</li>
+      <li>Keeps playing with the window closed, if you like</li>
+      <li>Media keys and GNOME's media controls</li>
+    </ul>
+    <p>Requires Spotify Premium. Descant is not affiliated with Spotify.</p>
+  </description>
+
+  <launchable type="desktop-id">io.github.develonrails.Descant.desktop</launchable>
+
+  <url type="homepage">https://github.com/develonrails/descant</url>
+  <url type="bugtracker">https://github.com/develonrails/descant/issues</url>
+  <url type="vcs-browser">https://github.com/develonrails/descant</url>
+
+  <categories>
+    <category>Audio</category>
+    <category>Player</category>
+  </categories>
+
+  <supports>
+    <control>pointing</control>
+    <control>keyboard</control>
+    <control>touch</control>
+  </supports>
+  <requires>
+    <display_length compare="ge">360</display_length>
+  </requires>
+
+  <content_rating type="oars-1.1" />
+
+  <releases>
+    <release version="0.1.0" date="2026-11-03">
+      <description>
+        <p>The first public build.</p>
+        <ul>
+          <li>Sign in with your phone</li>
+          <li>Home, search, Liked Songs, albums, artists and your playlists</li>
+          <li>Queue, shuffle, repeat, and picking up where you left off</li>
+          <li>Spotify Connect, a ten-band equalizer and media controls</li>
+        </ul>
+      </description>
+    </release>
+  </releases>
+</component>

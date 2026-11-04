@@ -1,0 +1,36 @@
+app-id: io.github.develonrails.DescantSpike
+runtime: org.gnome.Platform
+runtime-version: '51'
+sdk: org.gnome.Sdk
+sdk-extensions:
+  - org.freedesktop.Sdk.Extension.rust-stable
+command: descant-spike
+
+finish-args:
+  - --share=network
+  - --share=ipc
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --device=dri
+  - --socket=pulseaudio
+
+build-options:
+  append-path: /usr/lib/sdk/rust-stable/bin
+  env:
+    CARGO_HOME: /run/build/descant-spike/cargo
+    CARGO_NET_OFFLINE: 'true'
+
+modules:
+  - name: descant-spike
+    buildsystem: simple
+    build-commands:
+      - cargo --offline build --release --locked
+      - install -Dm755 target/release/descant-spike /app/bin/descant-spike
+    sources:
+      - type: dir
+        path: .
+        skip:
+          - target
+          - .flatpak-builder
+          - build-dir
+          - repo

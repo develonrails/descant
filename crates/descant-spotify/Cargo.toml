@@ -1,0 +1,28 @@
+[package]
+name = "descant-spotify"
+description = "Descant's Spotify side: pairing, the keyring, and reading and editing the library through the session"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+librespot-core = { workspace = true }
+librespot-oauth = { workspace = true }
+librespot-protocol = { workspace = true }
+protobuf = "3.7"
+http = "1"
+getrandom = "0.3"
+descant-core = { path = "../descant-core" }
+oo7 = { version = "0.6", default-features = false, features = ["tokio", "native_crypto"] }
+serde_json = "1"
+reqwest = { version = "0.12", default-features = false, features = ["native-tls", "json"] }
+tokio = { version = "1", features = ["rt", "macros"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }

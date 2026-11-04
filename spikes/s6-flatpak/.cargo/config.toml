@@ -1,0 +1,10 @@
+[source.crates-io]
+replace-with = "vendored-sources"
+
+[source."git+https://github.com/librespot-org/librespot?rev=99b6088bf3ea028f90192676ac1a337fa4b2ed12"]
+git = "https://github.com/librespot-org/librespot"
+rev = "99b6088bf3ea028f90192676ac1a337fa4b2ed12"
+replace-with = "vendored-sources"
+
+[source.vendored-sources]
+directory = "vendor"

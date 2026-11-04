@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<schemalist>
+  <schema id="io.github.develonrails.Descant" path="/io/github/develonrails/Descant/">
+    <key name="keep-playing" type="b">
+      <default>false</default>
+      <summary>Keep playing when the window is closed</summary>
+      <description>Closing the window hides it; the music and Spotify Connect carry on until Descant is quit from the main menu.</description>
+    </key>
+    <key name="volume" type="i">
+      <range min="0" max="100"/>
+      <default>100</default>
+      <summary>Volume</summary>
+      <description>Descant’s own volume, in percent, on top of the system volume.</description>
+    </key>
+    <key name="equalizer" type="b">
+      <default>false</default>
+      <summary>Equalizer</summary>
+      <description>Whether the equalizer shapes what plays on this computer.</description>
+    </key>
+    <key name="equalizer-gains" type="ad">
+      <default>[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]</default>
+      <summary>Equalizer bands</summary>
+      <description>The gain of each of the ten bands (60 Hz to 16 kHz), in dB, from −12 to 12.</description>
+    </key>
+    <key name="equalizer-preamp" type="d">
+      <range min="-12.0" max="12.0"/>
+      <default>0.0</default>
+      <summary>Equalizer pre-amp</summary>
+      <description>A gain on everything, in dB.</description>
+    </key>
+    <key name="resume" type="(ssu)">
+      <default>('', '', 0)</default>
+      <summary>Where playback stopped</summary>
+      <description>The context (empty for none), the track and the position in milliseconds, so the next start picks up there.</description>
+    </key>
+  </schema>
+</schemalist>

@@ -1,0 +1,13 @@
+[Desktop Entry]
+Name=Descant
+GenericName=Music Player
+Comment=A small, fast player for Spotify
+Categories=Audio;AudioVideo;Player;GTK;GNOME;
+Keywords=spotify;music;player;playlist;stream;
+Exec=descant
+Icon=io.github.develonrails.Descant
+Terminal=false
+Type=Application
+StartupNotify=true
+SingleMainWindow=true
+DBusActivatable=false

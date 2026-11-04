@@ -1,0 +1,21 @@
+target/
+/target/
+/_build/
+/build/
+/.flatpak-builder/
+/.flatpak/
+/repo/
+*.flatpak
+*.swp
+.idea/
+.vscode/
+spikes/s6-flatpak/vendor/
+spikes/s6-flatpak/build-dir/
+.flatpak-builder/
+/vendor/
+build-dir/
+repo/
+
+# Private working notes, kept beside the checkout but not published
+/CLAUDE.md
+/PLAN.md

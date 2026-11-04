@@ -1,0 +1,64 @@
+# Descant as a Flatpak. Before building, vendor the crates once:
+#
+#   cargo vendor --locked vendor > build-aux/flatpak/cargo-config.toml
+#   flatpak run org.flatpak.Builder --user --install --force-clean \
+#     build-dir build-aux/flatpak/io.github.develonrails.Descant.yml
+#
+# The build itself is offline. cargo-config.toml points cargo at vendor/.
+app-id: io.github.develonrails.Descant
+runtime: org.gnome.Platform
+runtime-version: '51'
+sdk: org.gnome.Sdk
+sdk-extensions:
+  - org.freedesktop.Sdk.Extension.rust-stable
+command: descant
+
+finish-args:
+  # Spotify
+  - --share=network
+  # Display
+  - --share=ipc
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --device=dri
+  # Sound: PipeWire's PulseAudio server
+  - --socket=pulseaudio
+  # Media keys and the shell's media controls
+  - --own-name=org.mpris.MediaPlayer2.Descant
+  # librespot's player starts a tokio runtime of its own with one worker per
+  # CPU core (14 threads on a laptop) for work two handle easily.
+  - --env=TOKIO_WORKER_THREADS=2
+  # librespot keeps the playing track (and the next) in temporary files.
+  # The sandbox's /tmp is tmpfs, so they would pin RAM; /var/tmp is the
+  # app's cache directory on disk, where they are page cache the kernel can
+  # take back.
+  - --env=TMPDIR=/var/tmp
+
+build-options:
+  append-path: /usr/lib/sdk/rust-stable/bin
+  env:
+    CARGO_HOME: /run/build/descant/cargo
+    CARGO_NET_OFFLINE: 'true'
+
+modules:
+  - name: descant
+    buildsystem: simple
+    build-commands:
+      - mkdir -p .cargo && cp build-aux/flatpak/cargo-config.toml .cargo/config.toml
+      - cargo --offline build --release --locked -p descant
+      - install -Dm755 target/release/descant /app/bin/descant
+      - install -Dm644 data/io.github.develonrails.Descant.desktop /app/share/applications/io.github.develonrails.Descant.desktop
+      - install -Dm644 data/io.github.develonrails.Descant.metainfo.xml /app/share/metainfo/io.github.develonrails.Descant.metainfo.xml
+      - install -Dm644 data/icons/io.github.develonrails.Descant.svg /app/share/icons/hicolor/scalable/apps/io.github.develonrails.Descant.svg
+      - install -Dm644 data/io.github.develonrails.Descant.gschema.xml /app/share/glib-2.0/schemas/io.github.develonrails.Descant.gschema.xml
+      - glib-compile-schemas /app/share/glib-2.0/schemas
+    sources:
+      - type: dir
+        path: ../..
+        skip:
+          - target
+          - build-dir
+          - .flatpak-builder
+          - repo
+          - spikes
+          - .git
