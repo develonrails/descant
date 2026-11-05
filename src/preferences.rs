@@ -64,12 +64,6 @@ fn general(
     storage.add(&artwork_row(dialog));
     storage.add(
         &adw::ActionRow::builder()
-            .title("Audio")
-            .subtitle("Not kept: tracks are streamed and never stored.")
-            .build(),
-    );
-    storage.add(
-        &adw::ActionRow::builder()
             .title("Sign-in")
             .subtitle("Kept in the system keyring until you log out.")
             .build(),
