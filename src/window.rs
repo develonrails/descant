@@ -111,6 +111,11 @@ struct Ui {
     /// Set while the pointer drags the edge, so the tick leaves it alone.
     seeking: std::cell::Cell<bool>,
     seek_pending: RefCell<Option<glib::SourceId>>,
+    /// The clock's next tick, on the next whole second of the place; only
+    /// while music plays and the window can be seen.
+    ticker: RefCell<Option<glib::SourceId>>,
+    /// The next time the place is written down, while music plays.
+    save_pending: RefCell<Option<glib::SourceId>>,
     /// Set while the slider follows the engine, so that move is not sent back.
     volume_following: std::cell::Cell<bool>,
     volume_before_mute: std::cell::Cell<f64>,
@@ -449,6 +454,8 @@ impl Ui {
             duration_ms: Default::default(),
             seeking: Default::default(),
             seek_pending: RefCell::new(None),
+            ticker: RefCell::new(None),
+            save_pending: RefCell::new(None),
             volume_following: Default::default(),
             volume_before_mute: std::cell::Cell::new(50.0),
             volume_pending: RefCell::new(None),
@@ -471,26 +478,17 @@ impl Ui {
     }
 
     fn connect(self: &Rc<Self>) {
-        // Between updates the place runs on by itself, so it is redrawn on a
-        // tick rather than waiting for the engine to say something.
+        // The clock only ticks where it can be seen: hiding the window stops
+        // it, and showing it again catches up at once. Music that keeps
+        // playing out of sight is written down as the window goes away.
         let weak = Rc::downgrade(self);
-        glib::timeout_add_local(Duration::from_millis(500), move || match weak.upgrade() {
-            Some(ui) => {
-                ui.show_position();
-                glib::ControlFlow::Continue
+        self.window.connect_visible_notify(move |window| {
+            if let Some(ui) = weak.upgrade() {
+                if !window.is_visible() {
+                    ui.save_position();
+                }
+                ui.follow_position();
             }
-            None => glib::ControlFlow::Break,
-        });
-        // The place is also written down every few seconds, not only on the
-        // way out: a kill, a crash or a session that ends never reaches the
-        // shutdown handler, and the track would start over next time.
-        let weak = Rc::downgrade(self);
-        glib::timeout_add_local(Duration::from_secs(5), move || match weak.upgrade() {
-            Some(ui) => {
-                ui.save_position();
-                glib::ControlFlow::Continue
-            }
-            None => glib::ControlFlow::Break,
         });
         let ui = self.clone();
         self.progress.connect_change_value(move |_, _, value| {
@@ -891,6 +889,8 @@ impl Ui {
                 }
                 settings::set_resume(&self.settings, Some(&point));
                 *self.resume.borrow_mut() = Some((point, playing, std::time::Instant::now()));
+                // The place has a new starting point; the seconds count from it.
+                self.follow_position();
             }
             Update::Error(message) => {
                 log::warn!("{message}");
@@ -1151,6 +1151,8 @@ impl Ui {
             mpris.status(&status);
         }
         *self.status.borrow_mut() = status;
+        self.keep_saving();
+        self.follow_position();
     }
 
     fn show_notice(self: &Rc<Self>, notice: Notice) {
@@ -1218,9 +1220,71 @@ impl Ui {
         }
     }
 
+    /// Whether the place runs on: music plays, for a signed-in account.
+    fn playing(&self) -> bool {
+        matches!(*self.status.borrow(), Status::Playing { .. })
+            && self.controller.borrow().is_some()
+    }
+
+    /// While music plays, the place is also written down now and then, not
+    /// only when the engine reports it or on the way out: a kill, a crash or
+    /// a session that ends never reaches the shutdown handler. This goes on
+    /// with the window hidden, and stops when the music does.
+    fn keep_saving(self: &Rc<Self>) {
+        let mut pending = self.save_pending.borrow_mut();
+        match (self.playing(), pending.is_some()) {
+            (true, false) => {
+                let weak = Rc::downgrade(self);
+                let id = glib::timeout_add_seconds_local(SAVE_EVERY_SECS, move || {
+                    match weak.upgrade() {
+                        Some(ui) => {
+                            ui.save_position();
+                            glib::ControlFlow::Continue
+                        }
+                        None => glib::ControlFlow::Break,
+                    }
+                });
+                *pending = Some(id);
+            }
+            (false, true) => {
+                if let Some(id) = pending.take() {
+                    id.remove();
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Starts the clock over from where the track stands, or stops it. It
+    /// ticks only while music plays and the window can be seen, once a
+    /// second, as the second turns over; otherwise nothing wakes for it.
+    fn follow_position(self: &Rc<Self>) {
+        if let Some(id) = self.ticker.borrow_mut().take() {
+            id.remove();
+        }
+        if self.playing() && self.window.is_visible() {
+            self.show_position();
+            self.next_tick();
+        }
+    }
+
+    fn next_tick(self: &Rc<Self>) {
+        let wait = till_next_second(self.position_ms());
+        let weak = Rc::downgrade(self);
+        let id = glib::timeout_add_local_once(Duration::from_millis(wait.into()), move || {
+            if let Some(ui) = weak.upgrade() {
+                // This tick has run, and its source with it.
+                ui.ticker.borrow_mut().take();
+                ui.show_position();
+                ui.next_tick();
+            }
+        });
+        *self.ticker.borrow_mut() = Some(id);
+    }
+
     /// Writes down where the track stands, while it plays. Paused playback
-    /// has already been written: the engine reports a place whenever the
-    /// status changes.
+    /// has already been written: the engine reports a place whenever it
+    /// starts, stops, moves or changes track.
     fn save_position(&self) {
         let Some((point, playing, since)) = self.resume.borrow().clone() else {
             return;
@@ -1458,6 +1522,9 @@ impl Ui {
 
     fn log_out(self: &Rc<Self>) {
         self.controller.borrow_mut().take(); // the controller stops once its handle is gone
+        // Nothing plays for this window any more: the clock and the saving stop.
+        self.keep_saving();
+        self.follow_position();
         self.library.clear();
         // The next account starts fresh.
         self.resume.borrow_mut().take();
@@ -1550,6 +1617,16 @@ fn show_quit(menu: &gio::Menu, shown: bool) {
     } else if !shown && present {
         menu.remove(1);
     }
+}
+
+/// How often the place is written down while music plays. A kill loses at
+/// most this much; each write rewrites the settings file.
+const SAVE_EVERY_SECS: u32 = 30;
+
+/// Milliseconds from `position_ms` to the next whole second, when the clock
+/// shows a new number: never zero, at most a second.
+fn till_next_second(position_ms: u32) -> u32 {
+    1000 - position_ms % 1000
 }
 
 /// A selectable sidebar row with an icon or a cover; its widget name carries the id.
@@ -1718,5 +1795,18 @@ mod tests {
     fn codes_are_split_for_reading() {
         assert_eq!(spaced("ABCDEF"), "ABC DEF");
         assert_eq!(spaced("ABCDEFGH"), "ABCDEFGH");
+    }
+
+    #[test]
+    fn the_clock_ticks_when_the_second_turns_over() {
+        assert_eq!(till_next_second(0), 1000);
+        assert_eq!(till_next_second(1), 999);
+        assert_eq!(till_next_second(2_999), 1);
+        assert_eq!(till_next_second(3_000), 1000);
+        assert_eq!(till_next_second(61_250), 750);
+        // The second the clock shows changes exactly then.
+        let at = 61_250;
+        assert_eq!(mmss(at + till_next_second(at) - 1), "1:01");
+        assert_eq!(mmss(at + till_next_second(at)), "1:02");
     }
 }
