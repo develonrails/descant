@@ -28,7 +28,7 @@ use crate::{
     grid::{self, Card},
     home, images,
     mpris::{self, Mpris},
-    nav::{Destination, Event, Library, Nav},
+    nav::{Destination, Event, Library, Nav, SLOW, kept},
     podcasts,
     qr::QrView,
     runtime, search,
@@ -678,29 +678,36 @@ impl Ui {
                 "search" => search::page(&nav),
                 "liked" => self.track_page(&nav, Source::Liked, "Liked Songs", &[]),
                 "albums" => {
-                    let session = nav.session();
-                    let saved = nav
-                        .library
-                        .collection
-                        .borrow()
-                        .as_ref()
-                        .map(|c| c.albums.clone());
+                    let n = nav.clone();
                     grid::grid_page(&nav, "Albums", "No Saved Albums", async move {
-                        let session = session?;
-                        let uris = match saved {
-                            Some(uris) => uris,
-                            None => library::collection(&session).await.ok()?.albums,
+                        let session = n.session()?;
+                        let fetch = || {
+                            let saved = n
+                                .library
+                                .collection
+                                .borrow()
+                                .as_ref()
+                                .map(|c| c.albums.clone());
+                            async move {
+                                let uris = match saved {
+                                    Some(uris) => uris,
+                                    None => library::collection(&session).await?.albums,
+                                };
+                                library::albums(&session, &uris).await
+                            }
                         };
-                        let albums = library::albums(&session, &uris).await.ok()?;
+                        let albums = kept(&n.library.places.albums, SLOW, fetch).await?;
                         Some(albums.iter().map(Card::album).collect())
                     })
                 }
                 "podcasts" => podcasts::podcasts_page(&nav),
                 "episodes" => podcasts::saved_page(&nav),
                 "artists" => {
-                    let session = nav.session();
+                    let n = nav.clone();
                     grid::grid_page(&nav, "Artists", "No Followed Artists", async move {
-                        let artists = library::followed_artists(&session?).await.ok()?;
+                        let session = n.session()?;
+                        let fetch = || async move { library::followed_artists(&session).await };
+                        let artists = kept(&n.library.places.artists, SLOW, fetch).await?;
                         Some(artists.iter().map(Card::artist).collect())
                     })
                 }
