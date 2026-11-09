@@ -64,7 +64,10 @@ pub fn page(nav: &Nav) -> adw::NavigationPage {
     let n = nav.clone();
     glib::spawn_future_local(async move {
         let s = n.session();
-        let fetch = async move { home::made_for_you(&s).await };
+        // GLib finds the zone as the desktop does: TZ, else /etc/localtime
+        // (inside the Flatpak, the host's zone as Flatpak links it in).
+        let zone = glib::TimeZone::local().identifier();
+        let fetch = async move { home::made_for_you(&s, &zone).await };
         if let Some(list) = kept(&n.library.home.made_for_you, SLOW, fetch).await {
             fill(
                 &made,

@@ -15,7 +15,10 @@ async fn main() {
     session.connect(credentials, false).await.unwrap();
 
     let t = Instant::now();
-    let mfy = home::made_for_you(&session).await.expect("made for you");
+    let zone = env::var("TZ").unwrap_or_default();
+    let mfy = home::made_for_you(&session, &zone)
+        .await
+        .expect("made for you");
     println!(
         "Made for you: {} in {:?}: {:?}",
         mfy.len(),
