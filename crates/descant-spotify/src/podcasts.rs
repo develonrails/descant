@@ -106,14 +106,36 @@ pub async fn search_shows(
 /// The shows the listener follows, most recently followed first.
 pub async fn followed(session: &Session) -> Result<Vec<ShowSummary>, Error> {
     let items = collection_items(session, "show").await?;
-    let uris = newest_first(&items, "spotify:show:");
+    shows(session, &newest_first(&items, "spotify:show:")).await
+}
+
+/// Shows described, in the order given; audiobooks are left out.
+pub async fn shows(session: &Session, uris: &[String]) -> Result<Vec<ShowSummary>, Error> {
     extended(
         session,
         ExtensionKind::SHOW_V4,
-        &uris,
+        uris,
         |u, s: &metadata::Show| (!s.is_audiobook()).then(|| show_summary(u, s)),
     )
     .await
+}
+
+/// The first `n` of `uris` that are shows rather than audiobooks, described.
+/// Metadata is asked for `n` at a time, only as far as needed: usually once.
+pub async fn first_shows(
+    session: &Session,
+    uris: &[String],
+    n: usize,
+) -> Result<Vec<ShowSummary>, Error> {
+    let mut found = Vec::new();
+    for chunk in uris.chunks(n.max(1)) {
+        if found.len() >= n {
+            break;
+        }
+        found.extend(shows(session, chunk).await?);
+    }
+    found.truncate(n);
+    Ok(found)
 }
 
 /// Your Episodes, most recently saved first. Extended metadata names no
