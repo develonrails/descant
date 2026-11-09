@@ -107,6 +107,9 @@ pub enum Input {
     SessionLost,
     ReconnectFailed,
     SessionRestored,
+    /// Whether the system has a network to reach Spotify through (GNOME's
+    /// network monitor). The supervisor assumes it has until told otherwise.
+    NetworkAvailable(bool),
     /// Time passed; sent at [`Supervisor::next_deadline`].
     Tick,
 }
@@ -182,6 +185,10 @@ pub struct Config {
     pub throttle_backoff_ms: Vec<u64>,
     /// Waits after successive failed reconnects; the last one repeats.
     pub reconnect_backoff_ms: Vec<u64>,
+    /// The wait between reconnects while there is no network. An attempt
+    /// then cannot succeed, so they wait for the network to come back; this
+    /// slow one is only in case the network monitor has it wrong.
+    pub offline_retry_ms: u64,
     /// Skips closer together than this are sent as one.
     pub skip_window_ms: u64,
     /// `Blocked` refusals in a row, before anything played, that mean PlayPlay.
@@ -194,6 +201,7 @@ impl Default for Config {
         Config {
             throttle_backoff_ms: vec![5_000, 15_000, 30_000],
             reconnect_backoff_ms: vec![1_000, 2_000, 5_000, 10_000, 30_000],
+            offline_retry_ms: 120_000,
             skip_window_ms: 400,
             blocked_after: 2,
         }
@@ -220,6 +228,8 @@ pub struct Supervisor {
     preload_cooldown_until: Option<Millis>,
     reconnect_attempt: usize,
     resume_after_reconnect: bool,
+    /// What the network monitor last said.
+    network: bool,
     /// A load or skip asked for while waiting, sent when the wait is over.
     deferred: Option<Command>,
     skip_window_until: Option<Millis>,
@@ -241,6 +251,7 @@ impl Supervisor {
             preload_cooldown_until: None,
             reconnect_attempt: 0,
             resume_after_reconnect: false,
+            network: true,
             deferred: None,
             skip_window_until: None,
             pending_skip: 0,
@@ -337,7 +348,11 @@ impl Supervisor {
             }
             Input::SessionLost => self.session_lost(now),
             Input::ReconnectFailed => {
-                let wait = backoff(&self.config.reconnect_backoff_ms, self.reconnect_attempt);
+                let wait = if self.network {
+                    backoff(&self.config.reconnect_backoff_ms, self.reconnect_attempt)
+                } else {
+                    self.config.offline_retry_ms
+                };
                 self.reconnect_attempt += 1;
                 self.status = Status::Reconnecting {
                     retry_at: Some(now + wait),
@@ -345,6 +360,7 @@ impl Supervisor {
                 vec![]
             }
             Input::SessionRestored => self.session_restored(),
+            Input::NetworkAvailable(available) => self.network_available(now, available),
             Input::Tick => self.tick(now),
         }
     }
@@ -549,8 +565,46 @@ impl Supervisor {
         self.reconnect_attempt = 0;
         self.skip_window_until = None;
         self.pending_skip = 0;
+        if !self.network {
+            // Building a session (and a player) cannot work now: wait for
+            // the network instead.
+            self.status = Status::Reconnecting {
+                retry_at: Some(now + self.config.offline_retry_ms),
+            };
+            return vec![Effect::Notify(Notice::ConnectionLost)];
+        }
         self.status = Status::Reconnecting { retry_at: None };
         vec![Effect::Notify(Notice::ConnectionLost), Effect::Reconnect]
+    }
+
+    /// Offline, a waiting reconnect waits for the network; once it is back,
+    /// it goes at once, and failures back off from the start again.
+    fn network_available(&mut self, now: Millis, available: bool) -> Vec<Effect> {
+        let was = std::mem::replace(&mut self.network, available);
+        let Status::Reconnecting { retry_at } = self.status else {
+            return vec![];
+        };
+        match (was, available, retry_at) {
+            // Gone: put off the next attempt. One in flight fails by itself.
+            (true, false, Some(_)) => {
+                self.status = Status::Reconnecting {
+                    retry_at: Some(now + self.config.offline_retry_ms),
+                };
+                vec![]
+            }
+            (false, true, _) => {
+                self.reconnect_attempt = 0;
+                match retry_at {
+                    Some(_) => {
+                        self.status = Status::Reconnecting { retry_at: None };
+                        vec![Effect::Reconnect]
+                    }
+                    // The attempt in flight may fail; the retry is soon.
+                    None => vec![],
+                }
+            }
+            _ => vec![],
+        }
     }
 
     fn session_restored(&mut self) -> Vec<Effect> {
@@ -1045,6 +1099,119 @@ mod tests {
             at(&mut s, 2_000, Input::SessionRestored),
             vec![Effect::Notify(Notice::Recovered), Effect::Send(load_ctx())]
         );
+    }
+
+    #[test]
+    fn a_session_lost_offline_waits_for_the_network() {
+        let mut s = sup();
+        playing_t1(&mut s, 0);
+        at(&mut s, 500, Input::NetworkAvailable(false));
+        assert_eq!(
+            at(&mut s, 1_000, Input::SessionLost),
+            vec![Effect::Notify(Notice::ConnectionLost)]
+        );
+        assert_eq!(s.next_deadline(), Some(Millis(121_000)));
+        assert_eq!(
+            at(&mut s, 30_000, Input::NetworkAvailable(true)),
+            vec![Effect::Reconnect]
+        );
+        assert_eq!(s.status(), &Status::Reconnecting { retry_at: None });
+        assert_eq!(
+            at(&mut s, 31_000, Input::SessionRestored),
+            vec![
+                Effect::Notify(Notice::Recovered),
+                Effect::Reload {
+                    track: T1.into(),
+                    position_ms: 1_000
+                }
+            ]
+        );
+    }
+
+    #[test]
+    fn losing_the_network_puts_off_a_waiting_reconnect() {
+        let mut s = sup();
+        playing_t1(&mut s, 0);
+        at(&mut s, 1_000, Input::SessionLost);
+        at(&mut s, 1_100, Input::ReconnectFailed);
+        assert_eq!(s.next_deadline(), Some(Millis(2_100)));
+        assert_eq!(at(&mut s, 1_500, Input::NetworkAvailable(false)), vec![]);
+        assert_eq!(s.next_deadline(), Some(Millis(121_500)));
+        assert_eq!(at(&mut s, 2_100, Input::Tick), vec![]);
+    }
+
+    #[test]
+    fn offline_a_failed_attempt_waits_long_and_still_tries() {
+        // The network monitor can be wrong (a VPN, a sandbox): slow, not never.
+        let mut s = sup();
+        playing_t1(&mut s, 0);
+        at(&mut s, 1_000, Input::SessionLost);
+        at(&mut s, 1_200, Input::NetworkAvailable(false));
+        at(&mut s, 1_500, Input::ReconnectFailed);
+        assert_eq!(
+            s.status(),
+            &Status::Reconnecting {
+                retry_at: Some(Millis(121_500))
+            }
+        );
+        assert_eq!(at(&mut s, 121_500, Input::Tick), vec![Effect::Reconnect]);
+        at(&mut s, 122_000, Input::ReconnectFailed);
+        assert_eq!(s.next_deadline(), Some(Millis(242_000)));
+    }
+
+    #[test]
+    fn the_network_coming_back_retries_at_once_and_backs_off_from_the_start() {
+        let mut s = sup();
+        playing_t1(&mut s, 0);
+        at(&mut s, 1_000, Input::SessionLost);
+        // Five failures in: the waits are at their longest.
+        for i in 0..5 {
+            at(&mut s, 2_000 + i, Input::ReconnectFailed);
+            at(&mut s, 2_000 + i, Input::Tick);
+        }
+        at(&mut s, 3_000, Input::NetworkAvailable(false));
+        at(&mut s, 3_100, Input::ReconnectFailed);
+        assert_eq!(
+            at(&mut s, 10_000, Input::NetworkAvailable(true)),
+            vec![Effect::Reconnect]
+        );
+        at(&mut s, 10_500, Input::ReconnectFailed);
+        assert_eq!(s.next_deadline(), Some(Millis(11_500)));
+    }
+
+    #[test]
+    fn the_network_coming_back_leaves_an_attempt_in_flight_alone() {
+        let mut s = sup();
+        playing_t1(&mut s, 0);
+        at(&mut s, 500, Input::NetworkAvailable(false));
+        at(&mut s, 1_000, Input::SessionLost);
+        assert_eq!(at(&mut s, 121_000, Input::Tick), vec![Effect::Reconnect]);
+        assert_eq!(at(&mut s, 121_100, Input::NetworkAvailable(true)), vec![]);
+        // It failed; the next try is the first step of the backoff.
+        at(&mut s, 121_500, Input::ReconnectFailed);
+        assert_eq!(s.next_deadline(), Some(Millis(122_500)));
+    }
+
+    #[test]
+    fn the_network_coming_and_going_leaves_playback_alone() {
+        let mut s = sup();
+        playing_t1(&mut s, 0);
+        assert_eq!(at(&mut s, 1_000, Input::NetworkAvailable(false)), vec![]);
+        assert_eq!(at(&mut s, 2_000, Input::NetworkAvailable(true)), vec![]);
+        assert_eq!(at(&mut s, 3_000, Input::NetworkAvailable(true)), vec![]);
+        assert_eq!(s.status(), &Status::Playing { track: T1.into() });
+        assert_eq!(s.next_deadline(), None);
+    }
+
+    #[test]
+    fn a_network_change_that_is_no_change_does_not_hurry_a_retry() {
+        // The monitor says "available" on every route change.
+        let mut s = sup();
+        playing_t1(&mut s, 0);
+        at(&mut s, 1_000, Input::SessionLost);
+        at(&mut s, 1_100, Input::ReconnectFailed);
+        assert_eq!(at(&mut s, 1_200, Input::NetworkAvailable(true)), vec![]);
+        assert_eq!(s.next_deadline(), Some(Millis(2_100)));
     }
 
     // ---- audio output ------------------------------------------------------

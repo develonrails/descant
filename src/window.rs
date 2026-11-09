@@ -471,6 +471,16 @@ impl Ui {
     }
 
     fn connect(self: &Rc<Self>) {
+        // Offline, reconnecting waits for the network rather than trying
+        // every half minute. Weak: the handle must go when the user logs out.
+        let weak = Rc::downgrade(self);
+        gio::NetworkMonitor::default().connect_network_changed(move |_, available| {
+            if let Some(ui) = weak.upgrade()
+                && let Some(controller) = &*ui.controller.borrow()
+            {
+                controller.set_network(available);
+            }
+        });
         // Between updates the place runs on by itself, so it is redrawn on a
         // tick rather than waiting for the engine to say something.
         let weak = Rc::downgrade(self);
@@ -857,6 +867,7 @@ impl Ui {
             };
             controller::spawn(credentials, config, updates)
         };
+        handle.set_network(gio::NetworkMonitor::default().is_network_available());
         *self.controller.borrow_mut() = Some(handle);
         let ui = self.clone();
         glib::spawn_future_local(async move {
