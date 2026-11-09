@@ -151,32 +151,45 @@ async fn post_once(
     }
 }
 
+/// Rows `from..from + length` of a playlist: the revision they belong to,
+/// their URIs, and how many rows the playlist has.
+async fn rows_at(
+    session: &Session,
+    id: &str,
+    from: usize,
+    length: usize,
+) -> Result<(Vec<u8>, Vec<String>, usize), Error> {
+    let endpoint =
+        format!("/playlist/v2/playlist/{id}?decorate=revision,length&from={from}&length={length}");
+    let bytes = session
+        .spclient()
+        .request(&http::Method::GET, &endpoint, None, None)
+        .await?;
+    let content = SelectedListContent::parse_from_bytes(&bytes)?;
+    let rows = content
+        .contents
+        .as_ref()
+        .map(|c| c.items.iter().map(|i| i.uri().to_string()).collect())
+        .unwrap_or_default();
+    Ok((
+        content.revision().to_vec(),
+        rows,
+        content.length().max(0) as usize,
+    ))
+}
+
 /// A playlist's current revision and all its rows' URIs, read from one revision.
 async fn rows(session: &Session, id: &str) -> Result<(Vec<u8>, Vec<String>), Error> {
     let (mut revision, mut rows) = (None::<Vec<u8>>, Vec::new());
     loop {
-        let endpoint = format!(
-            "/playlist/v2/playlist/{id}?decorate=revision,length&from={}&length=1000",
-            rows.len()
-        );
-        let bytes = session
-            .spclient()
-            .request(&http::Method::GET, &endpoint, None, None)
-            .await?;
-        let content = SelectedListContent::parse_from_bytes(&bytes)?;
+        let (at, page, total) = rows_at(session, id, rows.len(), 1000).await?;
         match &revision {
-            None => revision = Some(content.revision().to_vec()),
-            Some(first) if first.as_slice() != content.revision() => {
+            None => revision = Some(at),
+            Some(first) if *first != at => {
                 return Err(Error::aborted("the playlist changed meanwhile"));
             }
             _ => {}
         }
-        let page: Vec<String> = content
-            .contents
-            .as_ref()
-            .map(|c| c.items.iter().map(|i| i.uri().to_string()).collect())
-            .unwrap_or_default();
-        let total = content.length().max(0) as usize;
         let empty = page.is_empty();
         rows.extend(page);
         if empty || rows.len() >= total {
@@ -240,17 +253,34 @@ pub async fn add_to_playlist(
         .map(|_| ())
 }
 
-/// Removes the `occurrence`-th copy (from 0) of `track` from a playlist.
+/// Removes a row holding `track` from a playlist: the row at `row`, where
+/// the page saw it, if it still holds `track`, which takes reading that one
+/// row. Otherwise (the playlist changed above it, or no row is known) the
+/// whole playlist is read and the `occurrence`-th copy (from 0) goes.
 pub async fn remove_from_playlist(
     session: &Session,
     playlist: &str,
     track: &str,
+    row: Option<usize>,
     occurrence: usize,
 ) -> Result<(), Error> {
     let id = playlist_id(playlist)?;
-    let (revision, rows) = rows(session, id).await?;
-    let index = row_index(&rows, track, occurrence)
-        .ok_or_else(|| Error::aborted("the track is no longer in the playlist"))?;
+    let seen = match row {
+        Some(row) => {
+            let (revision, rows, _) = rows_at(session, id, row, 1).await?;
+            (rows.first().map(String::as_str) == Some(track)).then_some((revision, row))
+        }
+        None => None,
+    };
+    let (revision, index) = match seen {
+        Some(seen) => seen,
+        None => {
+            let (revision, rows) = rows(session, id).await?;
+            let index = row_index(&rows, track, occurrence)
+                .ok_or_else(|| Error::aborted("the track is no longer in the playlist"))?;
+            (revision, index)
+        }
+    };
     let changes = list_changes(
         &session.username(),
         now_ms(),
