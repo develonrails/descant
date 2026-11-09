@@ -30,8 +30,6 @@ const PAGE: u32 = 20;
 /// request each.
 const HOME_SHOWS: usize = 8;
 const PER_SHOW: u32 = 3;
-/// How long Home keeps those: new episodes come a few times a day at most.
-const HOME_KEPT: std::time::Duration = std::time::Duration::from_secs(30 * 60);
 
 /// Today, in the listener's own time zone.
 fn today() -> Date {
@@ -269,7 +267,7 @@ pub fn show_page(nav: &Nav, uri: &str, name: &str) -> adw::NavigationPage {
 
     let (n, u) = (nav.clone(), uri.to_string());
     follow.connect_clicked(move |button| {
-        let followed = !n.library.followed_shows.borrow().contains(&u);
+        let followed = !n.library.follows(&u);
         let (n, u, button) = (n.clone(), u.clone(), button.clone());
         glib::spawn_future_local(async move {
             if n.set_followed(u, followed).await {
@@ -304,16 +302,11 @@ pub fn show_page(nav: &Nav, uri: &str, name: &str) -> adw::NavigationPage {
             about.set_visible(true);
         }
         n.podcast_state().await;
-        if show.followed {
-            n.library
-                .followed_shows
-                .borrow_mut()
-                .insert(show.show.uri.clone());
+        // Followed elsewhere since the follows were read.
+        if show.followed && !n.library.follows(&show.show.uri) {
+            n.library.set_followed(&show.show.uri, true);
         }
-        show_followed(
-            &follow,
-            n.library.followed_shows.borrow().contains(&show.show.uri),
-        );
+        show_followed(&follow, n.library.follows(&show.show.uri));
         follow.set_sensitive(true);
     });
 
@@ -484,27 +477,23 @@ pub fn search_results(nav: &Nav, results: &gtk::Box, shows: &[ShowSummary], epis
 pub fn home_shelves(nav: &Nav, continuing: &gtk::Box, new: &gtk::Box) {
     let (nav, continuing, new) = (nav.clone(), continuing.clone(), new.clone());
     glib::spawn_future_local(async move {
-        // Nothing followed, nothing to read: one cheap look, once per login.
+        // Which shows are followed, newest first: one cheap look, which the
+        // show pages' buttons share. Nothing followed, nothing more to read.
         nav.podcast_state().await;
         if nav.library.followed_shows.borrow().is_empty() {
             return;
         }
-        let episodes = match nav.library.home.episodes.get(HOME_KEPT) {
-            Some(kept) => kept,
-            None => {
-                let Some(session) = nav.session() else { return };
-                let read = runtime()
-                    .spawn(async move {
-                        let shows = podcasts::followed(&session).await.ok()?;
-                        let first = &shows[..shows.len().min(HOME_SHOWS)];
-                        Some(podcasts::latest(&session, first, PER_SHOW).await)
-                    })
-                    .await;
-                let Ok(Some(episodes)) = read else { return };
-                let kept = Rc::new(episodes);
-                nav.library.home.episodes.set(kept.clone());
-                kept
+        // New episodes come a few times a day at most.
+        let Some(session) = nav.session() else { return };
+        let fetch = || {
+            let followed = nav.library.followed_shows.borrow().clone();
+            async move {
+                let shows = podcasts::first_shows(&session, &followed, HOME_SHOWS).await?;
+                Ok(podcasts::latest(&session, &shows, PER_SHOW).await)
             }
+        };
+        let Some(episodes) = kept(&nav.library.home.episodes, SLOW, fetch).await else {
+            return;
         };
         let today = today();
         let mut left_off: Vec<Episode> = episodes
