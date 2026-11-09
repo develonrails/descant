@@ -2,7 +2,7 @@
 //! other pages, which track is playing, and the library's shared state.
 
 use std::{
-    cell::RefCell,
+    cell::{Cell, RefCell},
     collections::HashSet,
     rc::Rc,
     time::{Duration, Instant},
@@ -12,7 +12,8 @@ use descant_core::{supervisor::Command, track::Cover};
 use descant_playback::controller::Session;
 use descant_spotify::{
     home::{Item, Top},
-    library::{Collection, PlaylistSummary},
+    library::{AlbumSummary, ArtistSummary, Collection, PlaylistSummary},
+    podcasts::{Episode, ShowSummary},
     profile::Profile,
 };
 use gtk::{glib, prelude::*};
@@ -65,6 +66,8 @@ pub struct Library {
     pub playlists: RefCell<Vec<PlaylistSummary>>,
     /// Home's shelves, kept a while so going back to Home costs nothing.
     pub home: HomeShelves,
+    /// The library places, kept the same way.
+    pub places: LibraryPlaces,
     /// Who is signed in, once Preferences asked.
     pub profile: RefCell<Option<Profile>>,
     /// Followed shows and Your Episodes, by URI, for the buttons that change them.
@@ -83,32 +86,79 @@ pub struct HomeShelves {
     pub recently_played: Fresh<Vec<Item>>,
     pub top: Fresh<Top>,
     /// The newest episodes of followed shows: Continue listening and New episodes.
-    pub episodes: Fresh<Vec<descant_spotify::podcasts::Episode>>,
+    pub episodes: Fresh<Vec<Episode>>,
+}
+
+/// What the Albums, Artists, Podcasts and Your Episodes places show. A
+/// change made here drops the one it touches; changes made elsewhere show
+/// once it is [`SLOW`] old.
+#[derive(Default)]
+pub struct LibraryPlaces {
+    pub albums: Fresh<Vec<AlbumSummary>>,
+    pub artists: Fresh<Vec<ArtistSummary>>,
+    pub shows: Fresh<Vec<ShowSummary>>,
+    pub episodes: Fresh<Vec<Episode>>,
+}
+
+/// How long kept data is given out: what changes with every track, and the rest.
+pub const QUICK: Duration = Duration::from_secs(2 * 60);
+pub const SLOW: Duration = Duration::from_secs(30 * 60);
+
+/// Data kept while fresh, otherwise fetched (on the runtime) and kept;
+/// `fetch` makes the read only when one is needed.
+pub async fn kept<T, F>(
+    fresh: &Fresh<T>,
+    max_age: Duration,
+    fetch: impl FnOnce() -> F,
+) -> Option<Rc<T>>
+where
+    T: Send + 'static,
+    F: Future<Output = Result<T, librespot_core::Error>> + Send + 'static,
+{
+    if let Some(value) = fresh.get(max_age) {
+        return Some(value);
+    }
+    let clears = fresh.clears.get();
+    let value = Rc::new(crate::runtime().spawn(fetch()).await.ok()?.ok()?);
+    // Cleared meanwhile (a change made while this was read): show it, but
+    // do not keep what may predate the change.
+    if fresh.clears.get() == clears {
+        fresh.set(value.clone());
+    }
+    Some(value)
 }
 
 /// A value and when it was fetched.
-pub struct Fresh<T>(RefCell<Option<(Instant, Rc<T>)>>);
+pub struct Fresh<T> {
+    kept: RefCell<Option<(Instant, Rc<T>)>>,
+    /// How often it was cleared, so a read under way at the time is not kept.
+    clears: Cell<u64>,
+}
 
 impl<T> Default for Fresh<T> {
     fn default() -> Fresh<T> {
-        Fresh(RefCell::new(None))
+        Fresh {
+            kept: RefCell::new(None),
+            clears: Cell::new(0),
+        }
     }
 }
 
 impl<T> Fresh<T> {
     /// The value, if it is younger than `max_age`.
     pub fn get(&self, max_age: Duration) -> Option<Rc<T>> {
-        let kept = self.0.borrow();
+        let kept = self.kept.borrow();
         let (at, value) = kept.as_ref()?;
         (at.elapsed() < max_age).then(|| value.clone())
     }
 
     pub fn set(&self, value: Rc<T>) {
-        *self.0.borrow_mut() = Some((Instant::now(), value));
+        *self.kept.borrow_mut() = Some((Instant::now(), value));
     }
 
     pub fn clear(&self) {
-        self.0.take();
+        self.kept.take();
+        self.clears.set(self.clears.get() + 1);
     }
 }
 
@@ -137,10 +187,15 @@ impl Library {
         found
     }
 
-    /// Takes in a fresh read of the collection.
+    /// Takes in a fresh read of the collection. Saved albums that changed
+    /// meanwhile (elsewhere) make the Albums place read them again.
     pub fn set_collection(&self, collection: Collection) {
         *self.liked.borrow_mut() = collection.tracks.iter().cloned().collect();
-        *self.collection.borrow_mut() = Some(collection);
+        let mut kept = self.collection.borrow_mut();
+        if kept.as_ref().is_some_and(|k| k.albums != collection.albums) {
+            self.places.albums.clear();
+        }
+        *kept = Some(collection);
     }
 
     /// Records a like or unlike made here.
@@ -173,6 +228,10 @@ impl Library {
         self.home.recently_played.clear();
         self.home.top.clear();
         self.home.episodes.clear();
+        self.places.albums.clear();
+        self.places.artists.clear();
+        self.places.shows.clear();
+        self.places.episodes.clear();
     }
 }
 
@@ -251,6 +310,7 @@ impl Nav {
             .await;
         let ok = matches!(done, Ok(Ok(())));
         if ok {
+            self.library.places.shows.clear();
             let mut shows = self.library.followed_shows.borrow_mut();
             if followed {
                 shows.insert(uri);
@@ -277,6 +337,7 @@ impl Nav {
             .await;
         let ok = matches!(done, Ok(Ok(())));
         if ok {
+            self.library.places.episodes.clear();
             let mut episodes = self.library.saved_episodes.borrow_mut();
             if saved {
                 episodes.insert(uri);
@@ -393,6 +454,29 @@ mod tests {
         assert!(fresh.get(Duration::ZERO).is_none());
         fresh.clear();
         assert!(fresh.get(Duration::from_secs(60)).is_none());
+    }
+
+    #[test]
+    fn saved_albums_changed_elsewhere_drop_the_kept_albums() {
+        let library = library(&[]);
+        library.places.albums.set(Rc::new(vec![]));
+        library.set_collection(Collection::default());
+        assert!(library.places.albums.get(SLOW).is_some(), "the same: kept");
+        library.set_collection(Collection {
+            tracks: vec![],
+            albums: vec!["spotify:album:a".into()],
+        });
+        assert!(library.places.albums.get(SLOW).is_none());
+    }
+
+    #[test]
+    fn logging_out_forgets_the_kept_places() {
+        let library = Library::default();
+        library.places.shows.set(Rc::new(vec![]));
+        library.places.episodes.set(Rc::new(vec![]));
+        library.clear();
+        assert!(library.places.shows.get(SLOW).is_none());
+        assert!(library.places.episodes.get(SLOW).is_none());
     }
 
     #[test]

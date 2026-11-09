@@ -15,7 +15,7 @@ use gtk::glib;
 use crate::{
     grid::{self, Card},
     images,
-    nav::Nav,
+    nav::{Nav, SLOW, kept},
     runtime,
     widgets::{cover, cover_image, pick, section_title, song_list, with_header},
 };
@@ -397,9 +397,11 @@ fn show_followed(button: &gtk::Button, followed: bool) {
 
 /// The Podcasts place: the shows followed.
 pub fn podcasts_page(nav: &Nav) -> adw::NavigationPage {
-    let session = nav.session();
+    let n = nav.clone();
     grid::grid_page(nav, "Podcasts", "No Followed Podcasts", async move {
-        let shows = podcasts::followed(&session).await.ok()?;
+        let session = n.session();
+        let fetch = || async move { podcasts::followed(&session).await };
+        let shows = kept(&n.library.places.shows, SLOW, fetch).await?;
         Some(shows.iter().map(Card::show).collect())
     })
 }
@@ -443,16 +445,13 @@ pub fn saved_page(nav: &Nav) -> adw::NavigationPage {
     let nav = nav.clone();
     glib::spawn_future_local(async move {
         let session = nav.session();
-        let found = runtime()
-            .spawn(async move { podcasts::saved_episodes(&session).await })
-            .await;
-        match found {
-            Ok(Ok(episodes)) if !episodes.is_empty() => {
+        let fetch = || async move { podcasts::saved_episodes(&session).await };
+        match kept(&nav.library.places.episodes, SLOW, fetch).await {
+            Some(list) if !list.is_empty() => {
                 nav.library
                     .saved_episodes
                     .borrow_mut()
-                    .extend(episodes.iter().map(|e| e.uri.clone()));
-                let list = Rc::new(episodes);
+                    .extend(list.iter().map(|e| e.uri.clone()));
                 let boxed = song_list();
                 for index in 0..list.len() {
                     boxed.append(&episode_row(&nav, &list, index, true));
