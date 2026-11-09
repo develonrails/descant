@@ -14,10 +14,6 @@ use std::collections::HashMap;
 
 use descant_core::track::TrackInfo;
 use librespot_core::{Error, session::Session};
-use librespot_protocol::{
-    extension_kind::ExtensionKind,
-    metadata::{Album, Artist},
-};
 use serde_json::{Value, json};
 
 use crate::{
@@ -114,10 +110,13 @@ pub async fn recently_played(session: &Session, limit: usize) -> Result<Vec<Item
         });
     }
     let (albums, artists) = tokio::join!(
-        library::extended::<Album>(session, ExtensionKind::ALBUM_V4, &album_uris),
-        library::extended::<Artist>(session, ExtensionKind::ARTIST_V4, &artist_uris)
+        library::albums(session, &album_uris),
+        library::artists(session, &artist_uris)
     );
-    let (albums, artists) = (albums?, artists?);
+    let albums: HashMap<String, AlbumSummary> =
+        albums?.into_iter().map(|a| (a.uri.clone(), a)).collect();
+    let artists: HashMap<String, ArtistSummary> =
+        artists?.into_iter().map(|a| (a.uri.clone(), a)).collect();
     let mut playlists = HashMap::new();
     while let Some(done) = headers.join_next().await {
         if let Ok(Some(summary)) = done {
@@ -128,9 +127,9 @@ pub async fn recently_played(session: &Session, limit: usize) -> Result<Vec<Item
         .iter()
         .filter_map(|uri| {
             if let Some(a) = albums.get(uri) {
-                Some(Item::Album(library::album_summary(uri, a)))
+                Some(Item::Album(a.clone()))
             } else if let Some(a) = artists.get(uri) {
-                Some(Item::Artist(library::artist_summary(uri, a)))
+                Some(Item::Artist(a.clone()))
             } else {
                 playlists.remove(uri).map(Item::Playlist)
             }
