@@ -363,15 +363,20 @@ pub fn prune_disk_cache() {
     });
 }
 
+/// Where librespot keeps the playing track and the next one while they
+/// download. On disk in the cache, not in TMPDIR: `/tmp` is tmpfs on most
+/// systems, where two tracks of about 10 MB each would pin RAM; in the cache
+/// they are page cache the kernel can take back.
+pub fn track_dir() -> PathBuf {
+    let dir = glib::user_cache_dir().join("descant").join("tracks");
+    let _ = std::fs::create_dir_all(&dir);
+    dir
+}
+
 /// librespot's temporary track files (`.tmp…`) normally go when a track
-/// ends; a crash leaves them. Only inside the Flatpak, where TMPDIR is
-/// Descant's own `/var/tmp` (see the manifest), and only old ones.
+/// ends; a crash leaves them. Only old ones, in case one is being written.
 fn remove_stale_track_files() {
-    let dir = std::env::temp_dir();
-    if dir != Path::new("/var/tmp") || !Path::new("/.flatpak-info").exists() {
-        return;
-    }
-    let Ok(entries) = std::fs::read_dir(dir) else {
+    let Ok(entries) = std::fs::read_dir(track_dir()) else {
         return;
     };
     let hour_ago = SystemTime::now() - std::time::Duration::from_secs(3600);

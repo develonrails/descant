@@ -39,11 +39,6 @@ finish-args:
   # threshold also stops glibc from raising it after the first large free.
   - --env=MALLOC_ARENA_MAX=2
   - --env=MALLOC_MMAP_THRESHOLD_=131072
-  # librespot keeps the playing track (and the next) in temporary files.
-  # The sandbox's /tmp is tmpfs, so they would pin RAM; /var/tmp is the
-  # app's cache directory on disk, where they are page cache the kernel can
-  # take back.
-  - --env=TMPDIR=/var/tmp
 
 build-options:
   append-path: /usr/lib/sdk/rust-stable/bin
