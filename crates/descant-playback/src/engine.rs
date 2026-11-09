@@ -19,8 +19,7 @@ use librespot_connect::{ConnectConfig, LoadRequest, LoadRequestOptions, PlayingT
 use librespot_core::{Error, authentication::Credentials, session::Session};
 use librespot_metadata::audio::{AudioItem, UniqueFields};
 use librespot_playback::{
-    audio_backend,
-    config::{AudioFormat, Bitrate, PlayerConfig},
+    config::{Bitrate, PlayerConfig},
     mixer::{self, MixerConfig},
     player::{Player, PlayerEvent},
 };
@@ -28,6 +27,7 @@ use tokio::{sync::mpsc::UnboundedSender, task::JoinHandle};
 
 use crate::{
     equalizer::{EqualizedSink, EqualizerSetting},
+    pulse::PulseSink,
     sink::GuardedSink,
 };
 
@@ -144,20 +144,20 @@ impl LibrespotEngine {
         let mixer = mixer::find(Some("softvol")).ok_or_else(|| Error::unavailable("softvol"))?(
             MixerConfig::default(),
         )?;
-        let backend = audio_backend::find(Some("pulseaudio".to_string()))
-            .ok_or_else(|| Error::unavailable("the pulseaudio backend is not compiled in"))?;
 
         let sink_reports = reports.clone();
         let player = Player::new(
             PlayerConfig {
                 bitrate: bitrate(quality),
+                // the sink plays floats, which need no dither
+                ditherer: None,
                 ..PlayerConfig::default()
             },
             session.clone(),
             mixer.get_soft_volume(),
             move || {
                 let guarded = GuardedSink::new(
-                    Box::new(move || backend(None, AudioFormat::default())),
+                    Box::new(|| Box::new(PulseSink::new(None))),
                     Box::new(move |message| {
                         let _ = sink_reports.send(Report::Input(Input::SinkFailed { message }));
                     }),
