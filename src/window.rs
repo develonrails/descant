@@ -28,7 +28,7 @@ use crate::{
     grid::{self, Card},
     home, images,
     mpris::{self, Mpris},
-    nav::{Destination, Event, Library, Nav, SLOW, kept},
+    nav::{self, Destination, Event, Library, Nav, SLOW, kept},
     podcasts,
     qr::QrView,
     runtime, search,
@@ -903,12 +903,35 @@ impl Ui {
         }
     }
 
-    /// A (new) session: (re)load the collection and the playlists, and show
-    /// the track the last run stopped at.
+    /// A (new) session: read the collection and the playlists, and show the
+    /// track the last run stopped at.
+    ///
+    /// The controller sends one after every reconnect too (a suspend, a
+    /// network change, a quality change). Then pages just carry on with the
+    /// new session; the collection and the playlists are read again only if
+    /// the last read is older than [`nav::LIBRARY_KEPT`].
     fn session_ready(self: &Rc<Self>, session: Session) {
         *self.library.session.borrow_mut() = Some(session.clone());
         self.show_resumed(&session);
-        let ui = self.clone();
+        let now = std::time::Instant::now();
+        if nav::stale(self.library.collection_read.get(), now) {
+            self.load_collection();
+        }
+        if nav::stale(self.library.playlists_read.get(), now) {
+            self.load_playlists();
+        }
+    }
+
+    /// (Re)reads Liked Songs and the saved albums.
+    fn load_collection(self: &Rc<Self>) {
+        let Some(session) = self.library.session.borrow().clone() else {
+            return;
+        };
+        // Counted from the start, so a reconnect meanwhile does not ask twice.
+        self.library
+            .collection_read
+            .set(Some(std::time::Instant::now()));
+        let (ui, used) = (self.clone(), session.clone());
         glib::spawn_future_local(async move {
             match runtime()
                 .spawn(async move { library::collection(&session).await })
@@ -918,11 +941,30 @@ impl Ui {
                     ui.library.set_collection(collection);
                     ui.show_like();
                 }
-                Ok(Err(e)) => log::warn!("collection: {e}"),
-                Err(_) => {}
+                result => {
+                    if let Ok(Err(e)) = result {
+                        log::warn!("collection: {e}");
+                    }
+                    ui.library.collection_read.set(None);
+                    if ui.read_again(&used) {
+                        ui.load_collection();
+                    }
+                }
             }
         });
-        self.load_playlists();
+    }
+
+    /// Whether a read through `used` that failed should be made again now:
+    /// its session died under it and the one that replaced it, which may
+    /// already be in (and have left the read to this one), is alive.
+    fn read_again(&self, used: &Session) -> bool {
+        used.is_invalid()
+            && self
+                .library
+                .session
+                .borrow()
+                .as_ref()
+                .is_some_and(|now| !now.is_invalid())
     }
 
     /// Before anything plays, the bar shows where the last run stopped; Play
@@ -955,23 +997,44 @@ impl Ui {
         let Some(session) = self.library.session.borrow().clone() else {
             return;
         };
-        let ui = self.clone();
+        self.library
+            .playlists_read
+            .set(Some(std::time::Instant::now()));
+        let (ui, used) = (self.clone(), session.clone());
         glib::spawn_future_local(async move {
             match runtime()
                 .spawn(async move { library::playlists(&session).await })
                 .await
             {
                 Ok(Ok(playlists)) => ui.show_playlists(playlists),
-                Ok(Err(e)) => {
-                    log::warn!("playlists: {e}");
-                    ui.toast("Could not load your playlists");
+                result => {
+                    ui.library.playlists_read.set(None);
+                    if ui.read_again(&used) {
+                        ui.load_playlists();
+                    } else if let Ok(Err(e)) = result {
+                        log::warn!("playlists: {e}");
+                        ui.toast("Could not load your playlists");
+                    }
                 }
-                Err(_) => {}
             }
         });
     }
 
-    fn show_playlists(&self, playlists: Vec<library::PlaylistSummary>) {
+    fn show_playlists(&self, mut playlists: Vec<library::PlaylistSummary>) {
+        // Covers found for an earlier load still hold.
+        {
+            let found = self.library.found_covers.borrow();
+            for playlist in playlists.iter_mut().filter(|p| p.covers.is_empty()) {
+                if let Some(covers) = found.get(&playlist.uri) {
+                    playlist.covers = covers.clone();
+                }
+            }
+        }
+        // The same list again (a reload after a reconnect): the rows, and
+        // Home, already show it.
+        if !playlists.is_empty() && *self.library.playlists.borrow() == playlists {
+            return;
+        }
         // Drop the rows of an earlier load: everything after the section header.
         let first = PLACES.len() as i32 + 1;
         while let Some(row) = self.sidebar.row_at_index(first) {
@@ -1013,21 +1076,20 @@ impl Ui {
         let Some(session) = self.library.session.borrow().clone() else {
             return;
         };
-        let missing: Vec<(usize, String)> = self
+        let missing: Vec<String> = self
             .library
             .playlists
             .borrow()
             .iter()
-            .enumerate()
-            .filter(|(_, p)| p.covers.is_empty())
-            .map(|(i, p)| (i, p.uri.clone()))
+            .filter(|p| p.covers.is_empty())
+            .map(|p| p.uri.clone())
             .collect();
         if missing.is_empty() {
             return;
         }
         let ui = self.clone();
         glib::spawn_future_local(async move {
-            for (index, uri) in missing {
+            for uri in missing {
                 let session = session.clone();
                 let asked = uri.clone();
                 let Ok(Ok(page)) = runtime()
@@ -1043,30 +1105,35 @@ impl Ui {
                     (true, None) => continue,
                 };
                 if !covers.is_empty() {
-                    ui.set_playlist_cover(index, &covers);
+                    ui.set_playlist_cover(&uri, &covers);
                 }
             }
         });
     }
 
-    /// Puts a cover on a sidebar row that went without one.
-    fn set_playlist_cover(&self, index: usize, covers: &[descant_core::track::Cover]) {
-        let uri = self
-            .library
-            .playlists
+    /// Puts a cover on a sidebar row that went without one, and keeps it
+    /// for the next time the playlists are read.
+    fn set_playlist_cover(&self, uri: &str, covers: &[descant_core::track::Cover]) {
+        self.library
+            .found_covers
             .borrow_mut()
-            .get_mut(index)
-            .map(|playlist| {
-                playlist.covers = covers.to_vec();
-                playlist.uri.clone()
-            });
+            .insert(uri.to_string(), covers.to_vec());
+        // Found by URI: the list may have been read again meanwhile.
+        let index = {
+            let mut playlists = self.library.playlists.borrow_mut();
+            let index = playlists.iter().position(|playlist| playlist.uri == uri);
+            if let Some(i) = index {
+                playlists[i].covers = covers.to_vec();
+            }
+            index
+        };
         // Home's tiles were built before this cover was found.
-        for image in uri
-            .map(|uri| self.library.take_awaiting(&uri))
-            .unwrap_or_default()
-        {
+        for image in self.library.take_awaiting(uri) {
             images::show(&image, pick(covers, image.pixel_size(), &image));
         }
+        let Some(index) = index else {
+            return;
+        };
         let row = index
             .try_into()
             .ok()
