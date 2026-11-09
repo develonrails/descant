@@ -70,11 +70,13 @@ pub struct Library {
     pub places: LibraryPlaces,
     /// Who is signed in, once Preferences asked.
     pub profile: RefCell<Option<Profile>>,
-    /// Followed shows and Your Episodes, by URI, for the buttons that change them.
-    pub followed_shows: RefCell<HashSet<String>>,
+    /// Followed shows, most recently followed first (Home reads the first
+    /// few), and Your Episodes, by URI, for the buttons that change them.
+    pub followed_shows: RefCell<Vec<String>>,
     pub saved_episodes: RefCell<HashSet<String>>,
-    /// Whether those two were read: once per login, when podcasts first show.
-    pub podcasts_read: std::cell::Cell<bool>,
+    /// When those two were read, if they were: when podcasts first show, and
+    /// again once that is [`SLOW`] ago.
+    pub podcasts_read: Cell<Option<Instant>>,
     /// Images waiting for a playlist's cover: one without a picture of its own
     /// borrows its first song's, which the sidebar finds after Home was built.
     pub awaited_covers: RefCell<Vec<(String, glib::WeakRef<gtk::Image>)>>,
@@ -213,6 +215,23 @@ impl Library {
         }
     }
 
+    /// Records a follow or unfollow: the show goes on top, or leaves; the
+    /// Podcasts place and Home's episodes are read again.
+    pub fn set_followed(&self, uri: &str, followed: bool) {
+        let mut shows = self.followed_shows.borrow_mut();
+        shows.retain(|u| u != uri);
+        if followed {
+            shows.insert(0, uri.to_string());
+        }
+        self.places.shows.clear();
+        self.home.episodes.clear();
+    }
+
+    /// Whether the show `uri` is followed, as far as is known.
+    pub fn follows(&self, uri: &str) -> bool {
+        self.followed_shows.borrow().iter().any(|u| u == uri)
+    }
+
     /// Forgets everything, for logging out.
     pub fn clear(&self) {
         self.session.take();
@@ -222,7 +241,7 @@ impl Library {
         self.profile.take();
         self.followed_shows.take();
         self.saved_episodes.take();
-        self.podcasts_read.set(false);
+        self.podcasts_read.set(None);
         self.awaited_covers.take();
         self.home.made_for_you.clear();
         self.home.recently_played.clear();
@@ -271,15 +290,18 @@ impl Nav {
     }
 
     /// Reads which shows are followed and which episodes saved, the first
-    /// time a page with podcasts needs it; listeners who never open one never
-    /// pay for it.
+    /// time a page with podcasts needs it (and again once that is a while
+    /// ago); listeners who never open one never pay for it.
     pub async fn podcast_state(&self) {
         let Some(session) = self.session() else {
             return;
         };
-        if self.library.podcasts_read.replace(true) {
+        let read_at = self.library.podcasts_read.get();
+        if read_at.is_some_and(|at| at.elapsed() < SLOW) {
             return;
         }
+        // Marked before reading, so pages opened meanwhile do not read too.
+        self.library.podcasts_read.set(Some(Instant::now()));
         let read = crate::runtime()
             .spawn(async move {
                 use descant_spotify::podcasts::saved_uris;
@@ -291,10 +313,10 @@ impl Nav {
             .await;
         match read {
             Ok((Ok(shows), Ok(episodes))) => {
-                *self.library.followed_shows.borrow_mut() = shows.into_iter().collect();
+                *self.library.followed_shows.borrow_mut() = shows;
                 *self.library.saved_episodes.borrow_mut() = episodes.into_iter().collect();
             }
-            _ => self.library.podcasts_read.set(false), // try again next time
+            _ => self.library.podcasts_read.set(read_at), // try again next time
         }
     }
 
@@ -309,13 +331,7 @@ impl Nav {
             .await;
         let ok = matches!(done, Ok(Ok(())));
         if ok {
-            self.library.places.shows.clear();
-            let mut shows = self.library.followed_shows.borrow_mut();
-            if followed {
-                shows.insert(uri);
-            } else {
-                shows.remove(&uri);
-            }
+            self.library.set_followed(&uri, followed);
         }
         self.toast(match (ok, followed) {
             (true, true) => "Following",
@@ -472,6 +488,22 @@ mod tests {
             albums: vec!["spotify:album:a".into()],
         });
         assert!(library.places.albums.get(SLOW).is_none());
+    }
+
+    #[test]
+    fn a_new_follow_goes_on_top_and_drops_what_shows_follows() {
+        let library = Library::default();
+        *library.followed_shows.borrow_mut() = vec!["b".into(), "c".into()];
+        library.places.shows.set(Rc::new(vec![]));
+        library.home.episodes.set(Rc::new(vec![]));
+        library.set_followed("a", true);
+        assert_eq!(*library.followed_shows.borrow(), ["a", "b", "c"]);
+        assert!(library.follows("a"));
+        assert!(library.places.shows.get(SLOW).is_none());
+        assert!(library.home.episodes.get(SLOW).is_none());
+        library.set_followed("b", false);
+        assert_eq!(*library.followed_shows.borrow(), ["a", "c"]);
+        assert!(!library.follows("b"));
     }
 
     #[test]
