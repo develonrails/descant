@@ -180,7 +180,13 @@ impl LibrespotEngine {
             ..Default::default()
         };
         let (spirc, spirc_task) =
-            Spirc::new(config, session.clone(), credentials, player.clone(), mixer).await?;
+            match Spirc::new(config, session.clone(), credentials, player.clone(), mixer).await {
+                Ok(spirc) => spirc,
+                Err(e) => {
+                    let_go(player);
+                    return Err(e);
+                }
+            };
 
         let closing = Arc::new(AtomicBool::new(false));
         let queue = Arc::new(Mutex::new(Queue::default()));
@@ -346,14 +352,32 @@ impl LibrespotEngine {
         }
     }
 
-    /// Stops reporting and leaves Spotify Connect.
+    /// Stops reporting and leaves Spotify Connect. The player goes once
+    /// Spirc's task has let go of its own handle on it, off the runtime's
+    /// workers (see [`let_go`]).
     pub fn shutdown(self) {
         self.closing.store(true, Ordering::SeqCst);
         let _ = self.spirc.shutdown();
-        for task in self.tasks {
+        for task in &self.tasks {
             task.abort();
         }
+        let LibrespotEngine { player, tasks, .. } = self;
+        tokio::spawn(async move {
+            for task in tasks {
+                let _ = task.await;
+            }
+            let_go(player);
+        });
     }
+}
+
+/// Drops a player where blocking is allowed. Dropping the last handle joins
+/// the player's thread, which first finishes what it is doing: draining the
+/// audio output after a pause, or waiting (seconds, with the network gone)
+/// for a stream to download. On one of the app's two runtime workers that
+/// would hold up every request and the controller with it.
+fn let_go(player: Arc<Player>) {
+    tokio::task::spawn_blocking(move || drop(player));
 }
 
 fn report_for(event: PlayerEvent, queue: &Mutex<Queue>) -> Vec<Report> {
