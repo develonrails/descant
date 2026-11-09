@@ -35,7 +35,7 @@ jobs:
       - name: Install Rust and the libraries we link
         run: >
           dnf install -y -q rust cargo rustfmt clippy gcc pkgconf-pkg-config
-          pulseaudio-libs-devel openssl-devel gtk4-devel libadwaita-devel
+          pulseaudio-libs-devel openssl-devel gtk4-devel libadwaita-devel libsecret-devel
           dbus-daemon
 
       - uses: actions/cache@v4

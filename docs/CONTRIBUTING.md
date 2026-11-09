@@ -15,6 +15,7 @@ no headers; build in a container:
 toolbox create -d fedora -r 44 descant-build
 toolbox run -c descant-build sudo dnf install -y rust cargo rustfmt clippy gcc \
     pkgconf-pkg-config gtk4-devel libadwaita-devel pulseaudio-libs-devel openssl-devel \
+    libsecret-devel \
     dbus-daemon
 toolbox run -c descant-build cargo test --workspace
 ```

@@ -19,7 +19,8 @@ protobuf = "3.7"
 http = "1"
 getrandom = "0.3"
 descant-core = { path = "../descant-core" }
-oo7 = { version = "0.6", default-features = false, features = ["tokio", "native_crypto"] }
+gio = "0.22"
+libsecret = { version = "0.9", features = ["v0_19"] }
 serde_json = "1"
 reqwest = { version = "0.12", default-features = false, features = ["native-tls", "json"] }
 tokio = { version = "1", features = ["rt", "macros"] }

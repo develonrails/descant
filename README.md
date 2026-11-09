@@ -89,7 +89,8 @@ On Fedora, or in a Fedora toolbox:
 
 ```sh
 sudo dnf install rust cargo gcc pkgconf-pkg-config \
-    gtk4-devel libadwaita-devel pulseaudio-libs-devel openssl-devel
+    gtk4-devel libadwaita-devel pulseaudio-libs-devel openssl-devel \
+    libsecret-devel
 cargo run
 ```
 
