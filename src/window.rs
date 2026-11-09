@@ -683,12 +683,7 @@ impl Ui {
                     grid::grid_page(&nav, "Albums", "No Saved Albums", async move {
                         let fetch = || {
                             let session = n.session();
-                            let saved = n
-                                .library
-                                .collection
-                                .borrow()
-                                .as_ref()
-                                .map(|c| c.albums.clone());
+                            let saved = n.library.saved_albums.borrow().clone();
                             async move {
                                 let uris = match saved {
                                     Some(uris) => uris,
@@ -1324,11 +1319,7 @@ impl Ui {
         // Connect, or nothing playing, the heart has nothing to do.
         self.like
             .set_sensitive(self.current.borrow().starts_with("spotify:track:"));
-        let liked = self
-            .library
-            .liked
-            .borrow()
-            .contains(&*self.current.borrow());
+        let liked = self.library.is_liked(&self.current.borrow());
         // Filled or hollow says it; the colour only underlines it.
         if liked {
             self.like.set_icon_name(LIKED_ICON);
@@ -1347,7 +1338,7 @@ impl Ui {
         if !uri.starts_with("spotify:track:") {
             return;
         }
-        let liked = !self.library.liked.borrow().contains(&uri);
+        let liked = !self.library.is_liked(&uri);
         glib::spawn_future_local(async move {
             nav.set_liked(uri, liked).await;
         });

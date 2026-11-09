@@ -17,6 +17,7 @@ use descant_spotify::{
     profile::Profile,
 };
 use gtk::{glib, prelude::*};
+use librespot_core::SpotifyId;
 
 /// Where a page can lead.
 #[derive(Clone)]
@@ -59,10 +60,15 @@ pub struct Library {
     /// The current session: replaced on every reconnect, so pages opened
     /// before it keep working.
     pub session: RefCell<Option<Session>>,
-    /// Liked tracks, for hearts and menus.
-    pub liked: RefCell<HashSet<String>>,
-    /// Liked Songs and saved albums in order, once read.
-    pub collection: RefCell<Option<Collection>>,
+    /// Liked tracks, for hearts and menus ([`Library::is_liked`]); also the
+    /// ones liked here before Liked Songs was read.
+    liked: RefCell<HashSet<SpotifyId>>,
+    /// Liked Songs newest first, once read. Shared with the Liked Songs page
+    /// rather than copied for it; a like made here while a page holds it
+    /// gives the library its own copy.
+    pub liked_songs: RefCell<Option<Rc<Vec<SpotifyId>>>>,
+    /// Saved albums newest first, once read.
+    pub saved_albums: RefCell<Option<Vec<String>>>,
     pub playlists: RefCell<Vec<PlaylistSummary>>,
     /// Home's shelves, kept a while so going back to Home costs nothing.
     pub home: HomeShelves,
@@ -130,6 +136,17 @@ where
     Some(value)
 }
 
+/// A track URI's id, which is all of it that differs from track to track;
+/// `None` for anything but a track.
+fn track_id(uri: &str) -> Option<SpotifyId> {
+    SpotifyId::from_base62(uri.strip_prefix("spotify:track:")?).ok()
+}
+
+/// The URI of the track with id `id`.
+pub fn track_uri(id: &SpotifyId) -> String {
+    format!("spotify:track:{}", id.to_base62())
+}
+
 /// A value and when it was fetched.
 pub struct Fresh<T> {
     kept: RefCell<Option<(Instant, Rc<T>)>>,
@@ -192,25 +209,38 @@ impl Library {
     /// Takes in a fresh read of the collection. Saved albums that changed
     /// meanwhile (elsewhere) make the Albums place read them again.
     pub fn set_collection(&self, collection: Collection) {
-        *self.liked.borrow_mut() = collection.tracks.iter().cloned().collect();
-        let mut kept = self.collection.borrow_mut();
-        if kept.as_ref().is_some_and(|k| k.albums != collection.albums) {
+        let songs: Vec<SpotifyId> = collection
+            .tracks
+            .iter()
+            .filter_map(|u| track_id(u))
+            .collect();
+        *self.liked.borrow_mut() = songs.iter().copied().collect();
+        *self.liked_songs.borrow_mut() = Some(Rc::new(songs));
+        let mut albums = self.saved_albums.borrow_mut();
+        if albums.as_ref().is_some_and(|a| *a != collection.albums) {
             self.places.albums.clear();
         }
-        *kept = Some(collection);
+        *albums = Some(collection.albums);
+    }
+
+    /// Whether the track `uri` is in Liked Songs, as far as is known.
+    pub fn is_liked(&self, uri: &str) -> bool {
+        track_id(uri).is_some_and(|id| self.liked.borrow().contains(&id))
     }
 
     /// Records a like or unlike made here.
     pub fn set_liked(&self, uri: &str, liked: bool) {
+        let Some(id) = track_id(uri) else { return };
         if liked {
-            self.liked.borrow_mut().insert(uri.to_string());
+            self.liked.borrow_mut().insert(id);
         } else {
-            self.liked.borrow_mut().remove(uri);
+            self.liked.borrow_mut().remove(&id);
         }
-        if let Some(collection) = &mut *self.collection.borrow_mut() {
-            collection.tracks.retain(|u| u != uri);
+        if let Some(songs) = &mut *self.liked_songs.borrow_mut() {
+            let songs = Rc::make_mut(songs);
+            songs.retain(|s| *s != id);
             if liked {
-                collection.tracks.insert(0, uri.to_string());
+                songs.insert(0, id);
             }
         }
     }
@@ -236,7 +266,8 @@ impl Library {
     pub fn clear(&self) {
         self.session.take();
         self.liked.take();
-        self.collection.take();
+        self.liked_songs.take();
+        self.saved_albums.take();
         self.playlists.take();
         self.profile.take();
         self.followed_shows.take();
@@ -432,33 +463,62 @@ impl Nav {
 mod tests {
     use super::*;
 
-    fn library(tracks: &[&str]) -> Library {
+    /// A track URI, told apart by its last character.
+    fn song(last: char) -> String {
+        format!("spotify:track:000000000000000000000{last}")
+    }
+
+    fn library(tracks: &[char]) -> Library {
         let library = Library::default();
         library.set_collection(Collection {
-            tracks: tracks.iter().map(|t| t.to_string()).collect(),
+            tracks: tracks.iter().map(|t| song(*t)).collect(),
             albums: vec![],
         });
         library
     }
 
     fn order(library: &Library) -> Vec<String> {
-        library.collection.borrow().as_ref().unwrap().tracks.clone()
+        let songs = library.liked_songs.borrow().clone().unwrap();
+        songs.iter().map(track_uri).collect()
     }
 
     #[test]
     fn a_new_like_goes_on_top() {
-        let library = library(&["b", "c"]);
-        library.set_liked("a", true);
-        assert_eq!(order(&library), ["a", "b", "c"]);
-        assert!(library.liked.borrow().contains("a"));
+        let library = library(&['b', 'c']);
+        library.set_liked(&song('a'), true);
+        assert_eq!(order(&library), [song('a'), song('b'), song('c')]);
+        assert!(library.is_liked(&song('a')));
     }
 
     #[test]
     fn an_unlike_leaves_the_list_and_the_hearts() {
-        let library = library(&["a", "b"]);
-        library.set_liked("a", false);
-        assert_eq!(order(&library), ["b"]);
-        assert!(!library.liked.borrow().contains("a"));
+        let library = library(&['a', 'b']);
+        library.set_liked(&song('a'), false);
+        assert_eq!(order(&library), [song('b')]);
+        assert!(!library.is_liked(&song('a')));
+        assert!(library.is_liked(&song('b')));
+    }
+
+    #[test]
+    fn liked_songs_are_shared_and_a_page_keeps_what_it_was_given() {
+        let library = library(&['a', 'b']);
+        let shown = library.liked_songs.borrow().clone().unwrap();
+        let again = library.liked_songs.borrow().clone().unwrap();
+        assert!(Rc::ptr_eq(&shown, &again), "not copied per visit");
+        library.set_liked(&song('c'), true);
+        assert_eq!(shown.len(), 2, "the open page's list stays as it was");
+        assert_eq!(order(&library), [song('c'), song('a'), song('b')]);
+    }
+
+    #[test]
+    fn track_ids_round_trip_and_only_tracks_are_liked() {
+        let uri = "spotify:track:6rqhFgbbKwnb9MLmUQDhG6";
+        assert_eq!(track_uri(&track_id(uri).unwrap()), uri);
+        let library = library(&[]);
+        library.set_liked("spotify:episode:6rqhFgbbKwnb9MLmUQDhG6", true);
+        assert!(!library.is_liked("spotify:episode:6rqhFgbbKwnb9MLmUQDhG6"));
+        assert!(!library.is_liked(uri));
+        assert!(order(&library).is_empty());
     }
 
     #[test]
@@ -514,8 +574,8 @@ mod tests {
     #[test]
     fn liking_before_the_collection_is_read_still_marks_the_heart() {
         let library = Library::default();
-        library.set_liked("a", true);
-        assert!(library.liked.borrow().contains("a"));
-        assert!(library.collection.borrow().is_none());
+        library.set_liked(&song('a'), true);
+        assert!(library.is_liked(&song('a')));
+        assert!(library.liked_songs.borrow().is_none());
     }
 }

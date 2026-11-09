@@ -223,7 +223,7 @@ fn top_songs(nav: &Nav, tracks: &[TrackInfo]) -> gtk::ListBox {
                 .build()
                 .upcast(),
         ];
-        if nav.library.liked.borrow().contains(&track.uri) {
+        if nav.library.is_liked(&track.uri) {
             extra.push(
                 gtk::Image::builder()
                     .icon_name(LIKED_ICON)
