@@ -39,14 +39,20 @@ pub struct Top {
     pub tracks: Vec<TrackInfo>,
 }
 
-pub async fn made_for_you(session: &Session) -> Result<Vec<PlaylistSummary>, Error> {
+/// Made for You, as Spotify picks it for `time_zone`: the user's IANA time
+/// zone (`Europe/Amsterdam`), which Home's shelves follow through the day.
+/// Anything that is not a zone name is sent as `UTC`.
+pub async fn made_for_you(
+    session: &Session,
+    time_zone: &str,
+) -> Result<Vec<PlaylistSummary>, Error> {
     let data = pathfinder::query(
         session,
         &pathfinder::HOME_SECTION,
         json!({
             "uri": MADE_FOR_YOU,
             "country": session.country(),
-            "timeZone": "Europe/Amsterdam",
+            "timeZone": zone_name(time_zone),
             "sp_t": "",
             "sectionItemsLimit": 20,
             "sectionItemsOffset": 0,
@@ -192,6 +198,21 @@ pub(crate) fn recent_uris(value: &Value) -> Vec<String> {
         .collect()
 }
 
+/// `zone` if it is an IANA zone name (`Europe/Amsterdam`, `UTC`), else `UTC`.
+/// A `TZ` may also hold a path or a POSIX rule (`CET-1CEST,M3.5.0,M10.5.0/3`),
+/// which Spotify would not understand; a leading `:` (`TZ=:Europe/Paris`)
+/// is dropped.
+pub(crate) fn zone_name(zone: &str) -> &str {
+    let zone = zone.trim().trim_start_matches(':');
+    let named = zone.split('/').all(|part| {
+        part.starts_with(|c: char| c.is_ascii_alphabetic())
+            && part
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || "_+-".contains(c))
+    });
+    if named { zone } else { "UTC" }
+}
+
 /// Spotify's descriptions may hold links (`<a href=…>Moby</a>`).
 fn strip_tags(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
@@ -262,5 +283,30 @@ mod tests {
             vec!["spotify:artist:a", "spotify:playlist:p", "spotify:album:b"]
         );
         assert!(recent_uris(&json!(null)).is_empty());
+    }
+
+    #[test]
+    fn zone_names_pass_and_anything_else_is_utc() {
+        for zone in [
+            "Europe/Amsterdam",
+            "America/Argentina/Buenos_Aires",
+            "America/Port-au-Prince",
+            "Etc/GMT+1",
+            "UTC",
+        ] {
+            assert_eq!(zone_name(zone), zone);
+        }
+        assert_eq!(zone_name(":Europe/Paris"), "Europe/Paris");
+        assert_eq!(zone_name(" Asia/Tokyo\n"), "Asia/Tokyo");
+        for odd in [
+            "",
+            "/etc/localtime",
+            "../usr/share/zoneinfo/Europe/Amsterdam",
+            "CET-1CEST,M3.5.0,M10.5.0/3",
+            "Europe//Amsterdam",
+            "+01:00",
+        ] {
+            assert_eq!(zone_name(odd), "UTC", "{odd:?}");
+        }
     }
 }
