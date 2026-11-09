@@ -16,7 +16,9 @@ use descant_core::{
     track::TrackInfo,
 };
 pub use librespot_core::session::Session;
-use librespot_core::{authentication::Credentials, config::SessionConfig};
+use librespot_core::{
+    authentication::Credentials, config::SessionConfig, spclient::RequestStrategy,
+};
 use tokio::{sync::mpsc, time::Instant};
 
 use crate::{
@@ -118,6 +120,15 @@ async fn connect(
     reports: mpsc::UnboundedSender<Report>,
 ) -> Result<LibrespotEngine, String> {
     let session = Session::new(config.session.clone(), None);
+    // librespot tries a failing spclient request (a 5xx, a refused
+    // connection) ten times back to back, which keeps a shelf, a playlist or
+    // a track's metadata waiting long after the answer is clear. This session
+    // is the one the library reads through too. Four tries still reach a
+    // fresh access point: librespot drops the current one after every third
+    // failure, and with three it would stop before trying another.
+    session
+        .spclient()
+        .set_strategy(RequestStrategy::TryTimes(4));
     LibrespotEngine::start(
         session,
         credentials.clone(),
