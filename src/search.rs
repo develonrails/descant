@@ -5,6 +5,7 @@ use std::{cell::Cell, rc::Rc};
 use adw::prelude::*;
 use descant_spotify::search::{self, SearchResults};
 use gtk::glib;
+use tokio::task::AbortHandle;
 
 use crate::{
     grid::{self, Card},
@@ -72,9 +73,15 @@ pub fn page(nav: &Nav) -> adw::NavigationPage {
         .build();
 
     let generation = Rc::new(Cell::new(0u64));
+    // The searches still under way; the next keystroke stops them, so a
+    // stale search stops downloading and parsing instead of running on.
+    let in_flight: Rc<Cell<Vec<AbortHandle>>> = Rc::default();
     let links = nav.clone();
     let nav = nav.clone();
     entry.connect_search_changed(move |entry| {
+        for search in in_flight.take() {
+            search.abort();
+        }
         let term = entry.text().trim().to_string();
         let current = generation.get() + 1;
         generation.set(current);
@@ -83,6 +90,12 @@ pub fn page(nav: &Nav) -> adw::NavigationPage {
             return;
         }
         stack.set_visible_child_name("searching");
+        // Music and podcasts are two searches, sent together.
+        let (session, s, t) = (nav.session(), nav.session(), term.clone());
+        let music = runtime().spawn(async move { search::search(&session, &term, LIMIT).await });
+        let shows = runtime()
+            .spawn(async move { descant_spotify::podcasts::search_shows(&s, &t, PODCASTS).await });
+        in_flight.set(vec![music.abort_handle(), shows.abort_handle()]);
         let (nav, stack, results, generation) = (
             nav.clone(),
             stack.clone(),
@@ -90,16 +103,10 @@ pub fn page(nav: &Nav) -> adw::NavigationPage {
             generation.clone(),
         );
         glib::spawn_future_local(async move {
-            // Music and podcasts are two searches, sent together.
-            let (session, s, t) = (nav.session(), nav.session(), term.clone());
-            let music =
-                runtime().spawn(async move { search::search(&session, &term, LIMIT).await });
-            let shows = runtime().spawn(async move {
-                descant_spotify::podcasts::search_shows(&s, &t, PODCASTS).await
-            });
             let (found, shows) = (music.await, shows.await);
+            // An aborted search ends here too: the user typed on.
             if generation.get() != current {
-                return; // the user typed on
+                return;
             }
             let shows = match shows {
                 Ok(Ok(shows)) => shows,
@@ -114,6 +121,9 @@ pub fn page(nav: &Nav) -> adw::NavigationPage {
                     // Episode rows show whether they are saved.
                     if !found.episodes.is_empty() {
                         nav.podcast_state().await;
+                        if generation.get() != current {
+                            return;
+                        }
                     }
                     show(&nav, &results, &found);
                     crate::podcasts::search_results(&nav, &results, &shows, &found.episodes);
