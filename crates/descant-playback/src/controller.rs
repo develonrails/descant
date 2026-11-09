@@ -89,15 +89,24 @@ impl Default for ControllerConfig {
     }
 }
 
-/// Sends the controller what the user asks for.
+/// Sends the controller what the user asks for, and whether there is a
+/// network.
 #[derive(Clone)]
 pub struct ControllerHandle {
     commands: mpsc::UnboundedSender<Command>,
+    network: mpsc::UnboundedSender<bool>,
 }
 
 impl ControllerHandle {
     pub fn send(&self, command: Command) {
         let _ = self.commands.send(command);
+    }
+
+    /// Whether the system has a network (GNOME's network monitor): while it
+    /// has none, the controller does not keep building sessions that cannot
+    /// connect, and it tries again as soon as one is back.
+    pub fn set_network(&self, available: bool) {
+        let _ = self.network.send(available);
     }
 }
 
@@ -109,8 +118,9 @@ pub fn spawn(
     updates: mpsc::UnboundedSender<Update>,
 ) -> ControllerHandle {
     let (commands, commands_rx) = mpsc::unbounded_channel();
-    tokio::spawn(run(credentials, config, commands_rx, updates));
-    ControllerHandle { commands }
+    let (network, network_rx) = mpsc::unbounded_channel();
+    tokio::spawn(run(credentials, config, commands_rx, network_rx, updates));
+    ControllerHandle { commands, network }
 }
 
 async fn connect(
@@ -146,6 +156,7 @@ async fn run(
     credentials: Credentials,
     mut config: ControllerConfig,
     mut commands: mpsc::UnboundedReceiver<Command>,
+    mut network: mpsc::UnboundedReceiver<bool>,
     updates: mpsc::UnboundedSender<Update>,
 ) {
     let (reports_tx, mut reports) = mpsc::unbounded_channel::<Report>();
@@ -220,6 +231,7 @@ async fn run(
                             break;
                         }
                     },
+                    Some(available) = network.recv() => Input::NetworkAvailable(available),
                     Some(report) = reports.recv() => match report {
                         Report::Input(input) => input,
                         Report::NowPlaying(info) => {

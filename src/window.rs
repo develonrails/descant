@@ -478,6 +478,16 @@ impl Ui {
     }
 
     fn connect(self: &Rc<Self>) {
+        // Offline, reconnecting waits for the network rather than trying
+        // every half minute. Weak: the handle must go when the user logs out.
+        let weak = Rc::downgrade(self);
+        gio::NetworkMonitor::default().connect_network_changed(move |_, available| {
+            if let Some(ui) = weak.upgrade()
+                && let Some(controller) = &*ui.controller.borrow()
+            {
+                controller.set_network(available);
+            }
+        });
         // The clock only ticks where it can be seen: hiding the window stops
         // it, and showing it again catches up at once. Music that keeps
         // playing out of sight is written down as the window goes away.
@@ -863,6 +873,7 @@ impl Ui {
             };
             controller::spawn(credentials, config, updates)
         };
+        handle.set_network(gio::NetworkMonitor::default().is_network_available());
         *self.controller.borrow_mut() = Some(handle);
         let ui = self.clone();
         glib::spawn_future_local(async move {
