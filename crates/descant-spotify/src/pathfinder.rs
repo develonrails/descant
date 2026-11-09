@@ -6,9 +6,13 @@
 //! and then, so all of them live in this one table.
 
 use librespot_core::{Error, session::Session};
+use serde::Deserialize;
 use serde_json::{Value, json};
 
-use crate::net;
+use crate::{
+    lenient::{Shape, lenient},
+    net,
+};
 
 /// An operation and the hash of its persisted query.
 pub struct Operation {
@@ -57,12 +61,13 @@ pub const PODCAST_EPISODES: Operation = Operation {
 
 const ENDPOINT: &str = "https://api-partner.spotify.com/pathfinder/v2/query";
 
-/// Runs `operation` with `variables` and returns the response's `data`.
-pub async fn query(
+/// Runs `operation` with `variables` and reads the answer's `data` as `T`,
+/// which names only the fields its caller shows.
+pub(crate) async fn query<T: Shape>(
     session: &Session,
     operation: &Operation,
     variables: Value,
-) -> Result<Value, Error> {
+) -> Result<T, Error> {
     let body = json!({
         "operationName": operation.name,
         "variables": variables,
@@ -84,12 +89,77 @@ pub async fn query(
             operation.name
         )));
     }
-    let mut value: Value = response
-        .json()
+    let bytes = response
+        .bytes()
         .await
         .map_err(|e| Error::unavailable(e.to_string()))?;
-    if let Some(errors) = value.get("errors") {
-        return Err(Error::unavailable(format!("{}: {errors}", operation.name)));
+    read(operation.name, &bytes)
+}
+
+/// A pathfinder answer: `data`, unless Spotify names `errors`.
+#[derive(Deserialize)]
+#[serde(bound = "T: Shape")]
+struct Answer<T> {
+    #[serde(default, deserialize_with = "lenient")]
+    data: T,
+    #[serde(default, deserialize_with = "present")]
+    errors: Option<Value>,
+}
+
+/// `errors` counts once it is there, even as `null`.
+fn present<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<Value>, D::Error> {
+    Value::deserialize(d).map(Some)
+}
+
+/// Reads an answer to `operation`; a missing or null `data` is `T`'s default.
+pub(crate) fn read<T: Shape>(operation: &str, body: &[u8]) -> Result<T, Error> {
+    let answer: Answer<T> =
+        serde_json::from_slice(body).map_err(|e| Error::unavailable(e.to_string()))?;
+    if let Some(errors) = answer.errors {
+        return Err(Error::unavailable(format!("{operation}: {errors}")));
     }
-    Ok(value["data"].take())
+    Ok(answer.data)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::lenient::{Items, shape};
+
+    shape! {
+        struct Found {
+            items: Vec<Option<String>>,
+        }
+    }
+
+    shape! {
+        struct Data {
+            found: Items<Found>,
+        }
+    }
+
+    #[test]
+    fn data_is_read_and_the_rest_skipped() {
+        let body = br#"{"data": {"found": {"items": [{"items": ["a"]}]}, "extra": [1, {}]},
+                        "extensions": {"cost": 3}}"#;
+        let data: Data = read("op", body).unwrap();
+        assert_eq!(data.found.items[0].items, vec![Some("a".to_string())]);
+    }
+
+    #[test]
+    fn errors_fail_the_answer_even_beside_data() {
+        let body = br#"{"data": {"found": null},
+                        "errors": [{"message": "PersistedQueryNotFound"}]}"#;
+        let err = read::<Data>("searchDesktop", body).err().unwrap();
+        assert!(err.to_string().contains("searchDesktop"));
+        assert!(err.to_string().contains("PersistedQueryNotFound"));
+    }
+
+    #[test]
+    fn missing_or_null_data_is_nothing_found() {
+        for body in [&br#"{}"#[..], br#"{"data": null}"#, br#"{"data": "odd"}"#] {
+            assert!(read::<Data>("op", body).unwrap().found.items.is_empty());
+        }
+        assert!(read::<Data>("op", b"not json").is_err());
+    }
 }

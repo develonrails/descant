@@ -480,6 +480,7 @@ dependencies = [
  "oo7",
  "protobuf",
  "reqwest",
+ "serde",
  "serde_json",
  "tokio",
 ]

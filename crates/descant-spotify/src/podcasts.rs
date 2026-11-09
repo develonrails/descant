@@ -15,11 +15,12 @@ use descant_core::{
 };
 use librespot_core::{Error, session::Session};
 use librespot_protocol::{extension_kind::ExtensionKind, metadata};
-use serde_json::{Value, json};
+use serde_json::json;
 
 use crate::{
+    lenient::{Data, Items, shape},
     library::{collection_items, cover, extended, gid_uri, newest_first},
-    net::{covers, items, text},
+    net::{Duration, Image, Named, covers, with_prefix},
     pathfinder,
 };
 
@@ -70,8 +71,9 @@ pub struct EpisodePage {
 }
 
 pub async fn show(session: &Session, uri: &str) -> Result<ShowPage, Error> {
-    let data = pathfinder::query(session, &pathfinder::SHOW_METADATA, json!({"uri": uri})).await?;
-    parse_show(&data["podcastUnionV2"]).ok_or_else(|| Error::not_found(format!("no show {uri}")))
+    let data: ShowAnswer =
+        pathfinder::query(session, &pathfinder::SHOW_METADATA, json!({"uri": uri})).await?;
+    parse_show(data.podcast_union_v2).ok_or_else(|| Error::not_found(format!("no show {uri}")))
 }
 
 pub async fn episodes(
@@ -80,13 +82,13 @@ pub async fn episodes(
     offset: u32,
     limit: u32,
 ) -> Result<EpisodePage, Error> {
-    let data = pathfinder::query(
+    let data: EpisodesAnswer = pathfinder::query(
         session,
         &pathfinder::PODCAST_EPISODES,
         json!({"uri": uri, "offset": offset, "limit": limit}),
     )
     .await?;
-    Ok(parse_episodes(&data["podcastUnionV2"]["episodesV2"]))
+    Ok(parse_episodes(data.podcast_union_v2.episodes_v2))
 }
 
 /// Shows for `term`, up to `limit`. Episodes come with the music search.
@@ -95,14 +97,14 @@ pub async fn search_shows(
     term: &str,
     limit: u32,
 ) -> Result<Vec<ShowSummary>, Error> {
-    let data = pathfinder::query(
+    let data: ShowsAnswer = pathfinder::query(
         session,
         &pathfinder::SEARCH_PODCASTS,
         json!({"searchTerm": term, "offset": 0, "limit": limit, "numberOfTopResults": 5,
                "includeAudiobooks": false, "includePreReleases": false}),
     )
     .await?;
-    Ok(parse_shows(&data["searchV2"]))
+    Ok(parse_shows(data.search_v2))
 }
 
 /// The shows the listener follows, most recently followed first.
@@ -159,73 +161,173 @@ pub async fn latest(session: &Session, shows: &[ShowSummary], per_show: u32) -> 
     all
 }
 
-// ---- pure helpers ----------------------------------------------------------
+// ---- what pathfinder's podcast answers are read for --------------------------------
 
-/// `podcastUnionV2` of `queryShowMetadataV2`.
-pub(crate) fn parse_show(d: &Value) -> Option<ShowPage> {
-    let uri = d["uri"]
-        .as_str()
-        .filter(|u| u.starts_with("spotify:show:"))?;
-    Some(ShowPage {
-        show: ShowSummary {
-            uri: uri.to_string(),
-            name: text(&d["name"]),
-            publisher: text(&d["publisher"]["name"]),
-            covers: covers(&d["coverArt"]["sources"]),
-        },
-        description: text(&d["description"]),
-        followed: d["saved"].as_bool().unwrap_or(false),
-    })
-}
-
-/// `episodesV2` of `queryPodcastEpisodes`.
-pub(crate) fn parse_episodes(v: &Value) -> EpisodePage {
-    EpisodePage {
-        episodes: items(v)
-            .filter_map(|i| episode(&i["entity"]["data"]))
-            .collect(),
-        total: v["totalCount"].as_u64().unwrap_or(0) as u32,
-        next: v["pagingInfo"]["nextOffset"].as_u64().map(|n| n as u32),
+shape! {
+    pub(crate) struct ShowAnswer {
+        podcast_union_v2: ShowData,
     }
 }
 
-/// `searchV2` of `searchPodcasts`.
-pub(crate) fn parse_shows(v: &Value) -> Vec<ShowSummary> {
-    items(&v["podcasts"])
-        .filter_map(|i| {
-            let d = &i["data"];
+shape! {
+    /// `podcastUnionV2` of `queryShowMetadataV2`.
+    pub(crate) struct ShowData {
+        uri: Option<String>,
+        name: Option<String>,
+        publisher: Named,
+        cover_art: Image,
+        description: Option<String>,
+        saved: Option<bool>,
+    }
+}
+
+shape! {
+    pub(crate) struct EpisodesAnswer {
+        podcast_union_v2: EpisodesUnion,
+    }
+}
+
+shape! {
+    pub(crate) struct EpisodesUnion {
+        episodes_v2: EpisodesV2,
+    }
+}
+
+shape! {
+    /// `episodesV2` of `queryPodcastEpisodes`.
+    pub(crate) struct EpisodesV2 {
+        items: Vec<EpisodeEntity>,
+        total_count: Option<u64>,
+        paging_info: PagingInfo,
+    }
+}
+
+shape! {
+    pub(crate) struct EpisodeEntity {
+        entity: Data<EpisodeData>,
+    }
+}
+
+shape! {
+    pub(crate) struct PagingInfo {
+        next_offset: Option<u64>,
+    }
+}
+
+shape! {
+    pub(crate) struct ShowsAnswer {
+        search_v2: SearchV2,
+    }
+}
+
+shape! {
+    /// `searchV2` of `searchPodcasts`.
+    pub(crate) struct SearchV2 {
+        podcasts: Items<Data<ShowCard>>,
+    }
+}
+
+shape! {
+    pub(crate) struct ShowCard {
+        uri: Option<String>,
+        name: Option<String>,
+        publisher: Named,
+        cover_art: Image,
+    }
+}
+
+shape! {
+    /// A pathfinder episode, as show pages and search name it.
+    pub(crate) struct EpisodeData {
+        uri: Option<String>,
+        name: Option<String>,
+        duration: Duration,
+        played_state: PlayedState,
+        podcast_v2: Data<ShowLink>,
+        release_date: ReleaseDate,
+        cover_art: Image,
+    }
+}
+
+shape! {
+    pub(crate) struct PlayedState {
+        play_position_milliseconds: Option<u64>,
+        state: Option<String>,
+    }
+}
+
+shape! {
+    pub(crate) struct ShowLink {
+        uri: Option<String>,
+        name: Option<String>,
+    }
+}
+
+shape! {
+    pub(crate) struct ReleaseDate {
+        iso_string: Option<String>,
+    }
+}
+
+// ---- pure helpers ----------------------------------------------------------
+
+pub(crate) fn parse_show(d: ShowData) -> Option<ShowPage> {
+    Some(ShowPage {
+        show: ShowSummary {
+            uri: with_prefix(d.uri, "spotify:show:")?,
+            name: d.name.unwrap_or_default(),
+            publisher: d.publisher.name.unwrap_or_default(),
+            covers: covers(d.cover_art),
+        },
+        description: d.description.unwrap_or_default(),
+        followed: d.saved.unwrap_or(false),
+    })
+}
+
+pub(crate) fn parse_episodes(v: EpisodesV2) -> EpisodePage {
+    EpisodePage {
+        episodes: v
+            .items
+            .into_iter()
+            .filter_map(|i| episode(i.entity.data))
+            .collect(),
+        total: v.total_count.unwrap_or(0) as u32,
+        next: v.paging_info.next_offset.map(|n| n as u32),
+    }
+}
+
+pub(crate) fn parse_shows(v: SearchV2) -> Vec<ShowSummary> {
+    v.podcasts
+        .items
+        .into_iter()
+        .filter_map(|Data { data: d }| {
             Some(ShowSummary {
-                uri: d["uri"]
-                    .as_str()
-                    .filter(|u| u.starts_with("spotify:show:"))?
-                    .into(),
-                name: text(&d["name"]),
-                publisher: text(&d["publisher"]["name"]),
-                covers: covers(&d["coverArt"]["sources"]),
+                uri: with_prefix(d.uri, "spotify:show:")?,
+                name: d.name.unwrap_or_default(),
+                publisher: d.publisher.name.unwrap_or_default(),
+                covers: covers(d.cover_art),
             })
         })
         .collect()
 }
 
 /// A pathfinder episode; anything that is not one is left out.
-pub(crate) fn episode(d: &Value) -> Option<Episode> {
-    let uri = d["uri"]
-        .as_str()
-        .filter(|u| u.starts_with("spotify:episode:"))?;
-    let duration_ms = d["duration"]["totalMilliseconds"].as_u64().unwrap_or(0) as u32;
-    let played = &d["playedState"];
-    let position = played["playPositionMilliseconds"].as_u64().unwrap_or(0) as u32;
-    let show = &d["podcastV2"]["data"];
+pub(crate) fn episode(d: EpisodeData) -> Option<Episode> {
+    let uri = with_prefix(d.uri, "spotify:episode:")?;
+    let duration_ms = d.duration.total_milliseconds.unwrap_or(0) as u32;
+    let played = d.played_state;
+    let position = played.play_position_milliseconds.unwrap_or(0) as u32;
+    let show = d.podcast_v2.data;
     Some(Episode {
-        uri: uri.to_string(),
-        name: text(&d["name"]),
-        show: text(&show["name"]),
-        show_uri: text(&show["uri"]),
+        uri,
+        name: d.name.unwrap_or_default(),
+        show: show.name.unwrap_or_default(),
+        show_uri: show.uri.unwrap_or_default(),
         duration_ms,
-        released: d["releaseDate"]["isoString"].as_str().and_then(iso_date),
-        covers: covers(&d["coverArt"]["sources"]),
+        released: d.release_date.iso_string.as_deref().and_then(iso_date),
+        covers: covers(d.cover_art),
         progress: podcast::progress(
-            played["state"].as_str().unwrap_or_default(),
+            played.state.as_deref().unwrap_or_default(),
             position,
             duration_ms,
         ),
@@ -278,7 +380,10 @@ fn sorted(mut covers: Vec<Cover>) -> Vec<Cover> {
 
 #[cfg(test)]
 mod tests {
+    use serde_json::Value;
+
     use super::*;
+    use crate::lenient::read;
 
     /// An episode as `queryPodcastEpisodes` and search name it (trimmed).
     fn daily(state: &str, position: u64) -> Value {
@@ -299,7 +404,7 @@ mod tests {
 
     #[test]
     fn an_episode_names_its_show_its_date_and_the_place_reached() {
-        let e = episode(&daily("IN_PROGRESS", 600_000)).unwrap();
+        let e = episode(read(daily("IN_PROGRESS", 600_000))).unwrap();
         assert_eq!(e.name, "A Landslide Victory for Democrats");
         assert_eq!(e.show, "The Daily");
         assert_eq!(e.show_uri, "spotify:show:3IM0lmZxpFAY7CwMuv9H4g");
@@ -317,8 +422,8 @@ mod tests {
 
     #[test]
     fn what_is_not_an_episode_is_left_out() {
-        assert_eq!(episode(&json!({"uri": "spotify:track:x"})), None);
-        assert_eq!(episode(&Value::Null), None);
+        assert_eq!(episode(read(json!({"uri": "spotify:track:x"}))), None);
+        assert_eq!(episode(read(Value::Null)), None);
     }
 
     #[test]
@@ -329,12 +434,12 @@ mod tests {
             "pagingInfo": {"nextOffset": 8},
             "totalCount": 3027
         });
-        let page = parse_episodes(&v);
+        let page = parse_episodes(read(v));
         assert_eq!(page.episodes.len(), 1);
         assert_eq!(page.total, 3027);
         assert_eq!(page.next, Some(8));
         assert_eq!(
-            parse_episodes(&json!({"items": []})).next,
+            parse_episodes(read(json!({"items": []}))).next,
             None,
             "the last page"
         );
@@ -351,12 +456,12 @@ mod tests {
             "coverArt": {"sources": [{"url": "https://i.scdn.co/image/c", "width": 300}]},
             "saved": true
         });
-        let page = parse_show(&v).unwrap();
+        let page = parse_show(read(v)).unwrap();
         assert_eq!(page.show.name, "The Daily");
         assert_eq!(page.show.publisher, "The New York Times");
         assert_eq!(page.description, "This is what the news should sound like.");
         assert!(page.followed);
-        assert_eq!(parse_show(&json!({"__typename": "NotFound"})), None);
+        assert_eq!(parse_show(read(json!({"__typename": "NotFound"}))), None);
     }
 
     #[test]
@@ -368,11 +473,11 @@ mod tests {
                 {"data": {"uri": "spotify:audiobook:x", "name": "Not a show"}}]},
             "query": {}
         });
-        let shows = parse_shows(&v);
+        let shows = parse_shows(read(v));
         assert_eq!(shows.len(), 1);
         assert_eq!(shows[0].name, "NRC Vandaag");
         assert_eq!(shows[0].publisher, "NRC");
-        assert!(parse_shows(&json!({"podcasts": null})).is_empty());
+        assert!(parse_shows(read(json!({"podcasts": null}))).is_empty());
     }
 
     #[test]

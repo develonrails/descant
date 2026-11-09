@@ -21,8 +21,9 @@ use librespot_protocol::{
 use serde_json::{Value, json};
 
 use crate::{
+    lenient::{Data, Items, shape},
     library::{self, AlbumSummary, ArtistSummary, PlaylistSummary},
-    net::{self, covers, items, text},
+    net::{self, AlbumKey, Image, Named, Track, covers, with_prefix},
     pathfinder,
 };
 
@@ -57,7 +58,7 @@ pub async fn made_for_you(session: &Session) -> Result<Vec<PlaylistSummary>, Err
         }),
     )
     .await?;
-    Ok(parse_section(&data))
+    Ok(parse_section(data))
 }
 
 pub async fn top(session: &Session, limit: u32) -> Result<Top, Error> {
@@ -76,7 +77,7 @@ pub async fn top(session: &Session, limit: u32) -> Result<Top, Error> {
         }),
     )
     .await?;
-    Ok(parse_top(&data))
+    Ok(parse_top(data))
 }
 
 pub async fn recently_played(session: &Session, limit: usize) -> Result<Vec<Item>, Error> {
@@ -140,38 +141,101 @@ pub async fn recently_played(session: &Session, limit: usize) -> Result<Vec<Item
 
 // ---- parsing (pure) --------------------------------------------------------------
 
+shape! {
+    /// A `homeSection` answer.
+    pub(crate) struct SectionAnswer {
+        home_sections: Sections,
+    }
+}
+
+shape! {
+    pub(crate) struct Sections {
+        sections: Vec<Section>,
+    }
+}
+
+shape! {
+    pub(crate) struct Section {
+        section_items: Items<SectionItem>,
+    }
+}
+
+shape! {
+    pub(crate) struct SectionItem {
+        content: Data<SectionPlaylist>,
+    }
+}
+
+shape! {
+    pub(crate) struct SectionPlaylist {
+        uri: Option<String>,
+        name: Option<String>,
+        owner_v2: Data<Named>,
+        images: Items<Image>,
+        description: Option<String>,
+    }
+}
+
+shape! {
+    /// A `userTopContent` answer.
+    pub(crate) struct TopAnswer {
+        me: Me,
+    }
+}
+
+shape! {
+    pub(crate) struct Me {
+        profile: TopProfile,
+    }
+}
+
+shape! {
+    pub(crate) struct TopProfile {
+        top_artists: Items<Data<net::Artist>>,
+        top_tracks: Items<Data<Track>>,
+    }
+}
+
 /// Playlists in a `homeSection` answer.
-pub(crate) fn parse_section(data: &Value) -> Vec<PlaylistSummary> {
-    data["homeSections"]["sections"]
-        .as_array()
+pub(crate) fn parse_section(data: SectionAnswer) -> Vec<PlaylistSummary> {
+    data.home_sections
+        .sections
         .into_iter()
-        .flatten()
-        .flat_map(|section| items(&section["sectionItems"]))
+        .flat_map(|section| section.section_items.items)
         .filter_map(|item| {
-            let d = &item["content"]["data"];
-            let uri = d["uri"]
-                .as_str()
-                .filter(|u| u.starts_with("spotify:playlist:"))?;
+            let d = item.content.data;
             Some(PlaylistSummary {
-                uri: uri.to_string(),
-                name: text(&d["name"]),
-                owner: text(&d["ownerV2"]["data"]["name"]),
-                covers: covers(&d["images"]["items"][0]["sources"]),
-                description: strip_tags(&text(&d["description"])),
+                uri: with_prefix(d.uri, "spotify:playlist:")?,
+                name: d.name.unwrap_or_default(),
+                owner: d.owner_v2.data.name.unwrap_or_default(),
+                covers: d
+                    .images
+                    .items
+                    .into_iter()
+                    .next()
+                    .map(covers)
+                    .unwrap_or_default(),
+                description: strip_tags(d.description.as_deref().unwrap_or_default()),
             })
         })
         .collect()
 }
 
 /// Top artists and tracks in a `userTopContent` answer.
-pub(crate) fn parse_top(data: &Value) -> Top {
-    let profile = &data["me"]["profile"];
+pub(crate) fn parse_top(data: TopAnswer) -> Top {
+    let profile = data.me.profile;
     Top {
-        artists: items(&profile["topArtists"])
-            .filter_map(|i| net::artist(&i["data"]))
+        artists: profile
+            .top_artists
+            .items
+            .into_iter()
+            .filter_map(|i| net::artist(i.data))
             .collect(),
-        tracks: items(&profile["topTracks"])
-            .filter_map(|i| net::track(&i["data"], "albumOfTrack"))
+        tracks: profile
+            .top_tracks
+            .items
+            .into_iter()
+            .filter_map(|i| net::track(i.data, AlbumKey::AlbumOfTrack))
             .collect(),
     }
 }
@@ -213,6 +277,7 @@ fn strip_tags(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::lenient::read;
 
     #[test]
     fn made_for_you_reads_playlists_with_descriptions() {
@@ -223,7 +288,7 @@ mod tests {
                 "images": {"items": [{"sources": [{"url": "https://i.scdn.co/image/d", "width": 300}]}]}}}},
             {"content": {"data": {"uri": "spotify:show:pod", "name": "a podcast"}}}
         ]}}]}});
-        let got = parse_section(&data);
+        let got = parse_section(read(data));
         assert_eq!(got.len(), 1);
         assert_eq!(got[0].name, "Discover Weekly");
         assert_eq!(got[0].description, "Your weekly mixtape of fresh music");
@@ -241,7 +306,7 @@ mod tests {
                     "coverArt": {"sources": [{"url": "c", "width": 64}]}},
                 "duration": {"totalMilliseconds": 214000}}}]}
         }}});
-        let top = parse_top(&data);
+        let top = parse_top(read(data));
         assert_eq!(top.artists[0].name, "Moby");
         let t = &top.tracks[0];
         assert_eq!(

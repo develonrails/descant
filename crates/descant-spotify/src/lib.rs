@@ -8,6 +8,7 @@
 //! - [`pathfinder`]: Spotify's internal GraphQL, its query hashes in one table
 
 mod collection;
+mod lenient;
 mod net;
 
 pub use net::http;
