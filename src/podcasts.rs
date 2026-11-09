@@ -317,23 +317,20 @@ pub fn show_page(nav: &Nav, uri: &str, name: &str) -> adw::NavigationPage {
         follow.set_sensitive(true);
     });
 
-    // Its episodes, a page at a time.
+    // Its episodes, a page at a time. Show More's own handler keeps the
+    // loader, so the loader is handed the button instead of holding it: a
+    // button its own handler holds is never freed, nor the page around it.
     // Where the next page starts, once one is known.
     let next_page: Rc<std::cell::Cell<Option<u32>>> = Rc::default();
-    let load: Rc<dyn Fn(u32)> = {
-        let (nav, uri, more_button, next_page) = (
-            nav.clone(),
-            uri.to_string(),
-            more.clone(),
-            next_page.clone(),
-        );
-        Rc::new(move |offset| {
+    let load = {
+        let (nav, uri, next_page) = (nav.clone(), uri.to_string(), next_page.clone());
+        move |more: &gtk::Button, offset: u32| {
             let (nav, uri, rows, spinner, more, first, play, line, refresh, next_page) = (
                 nav.clone(),
                 uri.clone(),
                 rows.clone(),
                 spinner.clone(),
-                more_button.clone(),
+                more.clone(),
                 first.clone(),
                 play.clone(),
                 line.clone(),
@@ -373,15 +370,14 @@ pub fn show_page(nav: &Nav, uri: &str, name: &str) -> adw::NavigationPage {
                 next_page.set(found.next.filter(|n| *n < found.total));
                 more.set_visible(next_page.get().is_some());
             });
-        })
+        }
     };
-    let again = load.clone();
-    more.connect_clicked(move |_| {
+    load(&more, 0);
+    more.connect_clicked(move |more| {
         if let Some(next) = next_page.take() {
-            again(next);
+            load(more, next);
         }
     });
-    load(0);
     page
 }
 
