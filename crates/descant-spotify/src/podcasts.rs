@@ -7,8 +7,6 @@
 //! metadata like the rest of the library. Audiobooks are left out: librespot
 //! cannot play them.
 
-use std::collections::HashMap;
-
 use descant_core::{
     podcast::{self, Date, Progress},
     track::Cover,
@@ -109,17 +107,13 @@ pub async fn search_shows(
 pub async fn followed(session: &Session) -> Result<Vec<ShowSummary>, Error> {
     let items = collection_items(session, "show").await?;
     let uris = newest_first(&items, "spotify:show:");
-    let shows: HashMap<String, metadata::Show> =
-        extended(session, ExtensionKind::SHOW_V4, &uris).await?;
-    Ok(uris
-        .iter()
-        .filter_map(|u| {
-            shows
-                .get(u)
-                .filter(|s| !s.is_audiobook())
-                .map(|s| show_summary(u, s))
-        })
-        .collect())
+    extended(
+        session,
+        ExtensionKind::SHOW_V4,
+        &uris,
+        |u, s: &metadata::Show| (!s.is_audiobook()).then(|| show_summary(u, s)),
+    )
+    .await
 }
 
 /// Your Episodes, most recently saved first. Extended metadata names no
@@ -127,12 +121,13 @@ pub async fn followed(session: &Session) -> Result<Vec<ShowSummary>, Error> {
 pub async fn saved_episodes(session: &Session) -> Result<Vec<Episode>, Error> {
     let items = collection_items(session, "listenlater").await?;
     let uris = newest_first(&items, "spotify:episode:");
-    let found: HashMap<String, metadata::Episode> =
-        extended(session, ExtensionKind::EPISODE_V4, &uris).await?;
-    Ok(uris
-        .iter()
-        .filter_map(|u| found.get(u).map(|e| episode_from_metadata(u, e)))
-        .collect())
+    extended(
+        session,
+        ExtensionKind::EPISODE_V4,
+        &uris,
+        |u, e: &metadata::Episode| Some(episode_from_metadata(u, e)),
+    )
+    .await
 }
 
 /// The URIs in a collection set, for marking what is followed or saved.

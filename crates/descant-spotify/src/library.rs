@@ -10,7 +10,9 @@ use std::collections::HashMap;
 use descant_core::track::{Cover, TrackInfo};
 use librespot_core::{Error, SpotifyId, session::Session};
 use librespot_protocol::{
-    extended_metadata::{BatchedEntityRequest, EntityRequest, ExtensionQuery},
+    extended_metadata::{
+        BatchedEntityRequest, BatchedExtensionResponse, EntityRequest, ExtensionQuery,
+    },
     extension_kind::ExtensionKind,
     metadata::{Album, AlbumGroup, Artist, Image, Track, image::Size},
     playlist4_external::{ListAttributes, SelectedListContent},
@@ -113,40 +115,59 @@ pub async fn playlist(
 /// Titles, artists, albums and covers for tracks, in the given order;
 /// tracks Spotify could not describe are left out.
 pub async fn tracks(session: &Session, uris: &[String]) -> Result<Vec<TrackInfo>, Error> {
-    let found: HashMap<String, Track> = extended(session, ExtensionKind::TRACK_V4, uris).await?;
-    Ok(uris
-        .iter()
-        .filter_map(|u| found.get(u).map(|t| track_info(u, t)))
-        .collect())
+    extended(session, ExtensionKind::TRACK_V4, uris, |u, t: &Track| {
+        Some(track_info(u, t))
+    })
+    .await
 }
 
-/// One extended-metadata message per URI, batched.
-pub(crate) async fn extended<M: Message>(
+/// One extended-metadata message per URI, batched, each made into what the
+/// caller keeps (`convert`) before the next batch is asked for. The messages
+/// are large (an artist carries its whole discography, a show every episode
+/// id) and only a few of their fields are read, so no more than one batch of
+/// them is held at a time. In the order of `uris`; the ones Spotify could not
+/// describe, or `convert` declines, are left out.
+pub(crate) async fn extended<M: Message, T>(
     session: &Session,
     kind: ExtensionKind,
     uris: &[String],
-) -> Result<HashMap<String, M>, Error> {
-    let mut found = HashMap::new();
+    convert: impl Fn(&str, &M) -> Option<T>,
+) -> Result<Vec<T>, Error> {
+    let mut found = Vec::with_capacity(uris.len());
     for chunk in uris.chunks(100) {
         let response = session
             .spclient()
             .get_extended_metadata(batch(kind, chunk))
             .await?;
-        for array in &response.extended_metadata {
-            if array.extension_kind.enum_value() != Ok(kind) {
+        found.extend(described(&response, kind, chunk, &convert));
+    }
+    Ok(found)
+}
+
+/// What one batch's answer describes, converted, in the order of `uris`.
+fn described<M: Message, T>(
+    response: &BatchedExtensionResponse,
+    kind: ExtensionKind,
+    uris: &[String],
+    convert: &impl Fn(&str, &M) -> Option<T>,
+) -> Vec<T> {
+    let mut messages: HashMap<&str, M> = HashMap::new();
+    for array in &response.extended_metadata {
+        if array.extension_kind.enum_value() != Ok(kind) {
+            continue;
+        }
+        for data in &array.extension_data {
+            let Some(any) = data.extension_data.as_ref() else {
                 continue;
-            }
-            for data in &array.extension_data {
-                let Some(any) = data.extension_data.as_ref() else {
-                    continue;
-                };
-                if let Ok(message) = M::parse_from_bytes(&any.value) {
-                    found.insert(data.entity_uri.clone(), message);
-                }
+            };
+            if let Ok(message) = M::parse_from_bytes(&any.value) {
+                messages.insert(data.entity_uri.as_str(), message);
             }
         }
     }
-    Ok(found)
+    uris.iter()
+        .filter_map(|u| messages.get(u.as_str()).and_then(|m| convert(u, m)))
+        .collect()
 }
 
 fn batch(kind: ExtensionKind, uris: &[String]) -> BatchedEntityRequest {
@@ -234,22 +255,24 @@ pub async fn collection(session: &Session) -> Result<Collection, Error> {
 
 /// Albums described, in the order given.
 pub async fn albums(session: &Session, uris: &[String]) -> Result<Vec<AlbumSummary>, Error> {
-    let albums: HashMap<String, Album> = extended(session, ExtensionKind::ALBUM_V4, uris).await?;
-    Ok(uris
-        .iter()
-        .filter_map(|u| albums.get(u).map(|a| album_summary(u, a)))
-        .collect())
+    extended(session, ExtensionKind::ALBUM_V4, uris, |u, a: &Album| {
+        Some(album_summary(u, a))
+    })
+    .await
+}
+
+/// Artists described, in the order given.
+pub async fn artists(session: &Session, uris: &[String]) -> Result<Vec<ArtistSummary>, Error> {
+    extended(session, ExtensionKind::ARTIST_V4, uris, |u, a: &Artist| {
+        Some(artist_summary(u, a))
+    })
+    .await
 }
 
 pub async fn followed_artists(session: &Session) -> Result<Vec<ArtistSummary>, Error> {
     let items = collection_items(session, "artist").await?;
     let uris = newest_first(&items, "spotify:artist:");
-    let artists: HashMap<String, Artist> =
-        extended(session, ExtensionKind::ARTIST_V4, &uris).await?;
-    let mut list: Vec<ArtistSummary> = uris
-        .iter()
-        .filter_map(|u| artists.get(u).map(|a| artist_summary(u, a)))
-        .collect();
+    let mut list = artists(session, &uris).await?;
     list.sort_by_key(|a| a.name.to_lowercase());
     Ok(list)
 }
@@ -257,12 +280,20 @@ pub async fn followed_artists(session: &Session) -> Result<Vec<ArtistSummary>, E
 // ---- album and artist pages -----------------------------------------------
 
 pub async fn album(session: &Session, uri: &str) -> Result<AlbumPage, Error> {
-    let albums: HashMap<String, Album> =
-        extended(session, ExtensionKind::ALBUM_V4, &[uri.to_string()]).await?;
-    let album = albums.get(uri).ok_or_else(|| Error::not_found("album"))?;
+    let found = extended(
+        session,
+        ExtensionKind::ALBUM_V4,
+        &[uri.to_string()],
+        |u, a: &Album| Some((album_summary(u, a), album_track_uris(a))),
+    )
+    .await?;
+    let (album, uris) = found
+        .into_iter()
+        .next()
+        .ok_or_else(|| Error::not_found("album"))?;
     Ok(AlbumPage {
-        album: album_summary(uri, album),
-        tracks: tracks(session, &album_track_uris(album)).await?,
+        album,
+        tracks: tracks(session, &uris).await?,
     })
 }
 
@@ -272,26 +303,38 @@ pub async fn artist(
     uri: &str,
     singles_shown: usize,
 ) -> Result<ArtistPage, Error> {
-    let artists: HashMap<String, Artist> =
-        extended(session, ExtensionKind::ARTIST_V4, &[uri.to_string()]).await?;
-    let artist = artists.get(uri).ok_or_else(|| Error::not_found("artist"))?;
-    let albums = group_uris(&artist.album_group);
-    let mut singles = group_uris(&artist.single_group);
-    singles.truncate(singles_shown);
+    let country = session.country();
+    let found = extended(
+        session,
+        ExtensionKind::ARTIST_V4,
+        &[uri.to_string()],
+        |u, a: &Artist| {
+            let mut singles = group_uris(&a.single_group);
+            singles.truncate(singles_shown);
+            Some((
+                artist_summary(u, a),
+                group_uris(&a.album_group),
+                singles,
+                top_track_uris(a, &country),
+            ))
+        },
+    )
+    .await?;
+    let (artist, albums, singles, top) = found
+        .into_iter()
+        .next()
+        .ok_or_else(|| Error::not_found("artist"))?;
     let all: Vec<String> = albums.iter().chain(&singles).cloned().collect();
-    let top = top_track_uris(artist, &session.country());
-    let (described, top_tracks) = tokio::join!(
-        extended::<Album>(session, ExtensionKind::ALBUM_V4, &all),
-        tracks(session, &top)
-    );
-    let described = described?;
+    let (described, top_tracks) = tokio::join!(self::albums(session, &all), tracks(session, &top));
+    let described: HashMap<String, AlbumSummary> =
+        described?.into_iter().map(|a| (a.uri.clone(), a)).collect();
     let summaries = |uris: &[String]| -> Vec<AlbumSummary> {
         uris.iter()
-            .filter_map(|u| described.get(u).map(|a| album_summary(u, a)))
+            .filter_map(|u| described.get(u).cloned())
             .collect()
     };
     Ok(ArtistPage {
-        artist: artist_summary(uri, artist),
+        artist,
         top_tracks: top_tracks?,
         albums: summaries(&albums),
         singles: summaries(&singles),
@@ -841,6 +884,94 @@ mod tests {
         let mut group = AlbumGroup::new();
         group.album = vec![a1, a1b];
         assert_eq!(group_uris(&[group]).len(), 1, "one per group");
+    }
+
+    /// One kind's part of an answer: (entity URI, message bytes).
+    type Entries<'a> = Vec<(&'a str, Vec<u8>)>;
+
+    /// An extended-metadata answer, kind by kind.
+    fn answer(arrays: Vec<(ExtensionKind, Entries)>) -> BatchedExtensionResponse {
+        use librespot_protocol::{
+            entity_extension_data::EntityExtensionData, extended_metadata::EntityExtensionDataArray,
+        };
+        use protobuf::well_known_types::any::Any;
+        let mut response = BatchedExtensionResponse::new();
+        response.extended_metadata = arrays
+            .into_iter()
+            .map(|(kind, entries)| EntityExtensionDataArray {
+                extension_kind: EnumOrUnknown::new(kind),
+                extension_data: entries
+                    .into_iter()
+                    .map(|(uri, value)| EntityExtensionData {
+                        entity_uri: uri.to_string(),
+                        extension_data: MessageField::some(Any {
+                            value,
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    })
+                    .collect(),
+                ..Default::default()
+            })
+            .collect();
+        response
+    }
+
+    fn named_track(name: &str) -> Vec<u8> {
+        let mut track = Track::new();
+        track.set_name(name.into());
+        track.write_to_bytes().unwrap()
+    }
+
+    #[test]
+    fn a_batch_answer_is_converted_in_the_order_asked() {
+        let response = answer(vec![
+            (
+                ExtensionKind::TRACK_V4,
+                vec![
+                    ("spotify:track:b", named_track("Bones")),
+                    ("spotify:track:a", named_track("Airbag")),
+                    ("spotify:track:bad", vec![0xff, 0xff, 0xff]),
+                ],
+            ),
+            (
+                ExtensionKind::ALBUM_V4,
+                vec![("spotify:track:c", named_track("Not asked as an album"))],
+            ),
+        ]);
+        let uris: Vec<String> = [
+            "spotify:track:a",
+            "spotify:track:missing",
+            "spotify:track:b",
+            "spotify:track:c",
+            "spotify:track:bad",
+            "spotify:track:a",
+        ]
+        .iter()
+        .map(|u| u.to_string())
+        .collect();
+        let names = described(
+            &response,
+            ExtensionKind::TRACK_V4,
+            &uris,
+            &|u, t: &Track| Some(format!("{u} {}", t.name())),
+        );
+        assert_eq!(
+            names,
+            vec![
+                "spotify:track:a Airbag",
+                "spotify:track:b Bones",
+                "spotify:track:a Airbag",
+            ],
+            "in the order asked, a repeated row repeated, the rest left out"
+        );
+        let declined = described(
+            &response,
+            ExtensionKind::TRACK_V4,
+            &uris,
+            &|_, t: &Track| (t.name() != "Bones").then_some(()),
+        );
+        assert_eq!(declined.len(), 2, "what the converter declines is left out");
     }
 
     #[test]
