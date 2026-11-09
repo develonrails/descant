@@ -5,8 +5,6 @@
 //! artists and Your top songs. Each section has its place from the start and
 //! fills in when its data comes, so nothing jumps around.
 
-use std::{rc::Rc, time::Duration};
-
 use adw::prelude::*;
 use descant_core::{supervisor::Command, track::TrackInfo};
 use descant_spotify::home::{self, Item};
@@ -14,8 +12,7 @@ use gtk::glib;
 
 use crate::{
     grid::{self, Card},
-    nav::{Destination, Fresh, Nav},
-    runtime,
+    nav::{Destination, Nav, QUICK, SLOW, kept},
     widgets::{LIKED_ICON, cover, section_title, song_list, song_row, with_header},
 };
 
@@ -64,7 +61,7 @@ pub fn page(nav: &Nav) -> adw::NavigationPage {
     let n = nav.clone();
     glib::spawn_future_local(async move {
         let Some(s) = n.session() else { return };
-        let fetch = async move { home::made_for_you(&s).await };
+        let fetch = || async move { home::made_for_you(&s).await };
         if let Some(list) = kept(&n.library.home.made_for_you, SLOW, fetch).await {
             fill(
                 &made,
@@ -75,7 +72,7 @@ pub fn page(nav: &Nav) -> adw::NavigationPage {
     let n = nav.clone();
     glib::spawn_future_local(async move {
         let Some(s) = n.session() else { return };
-        let fetch = async move { home::recently_played(&s, 20).await };
+        let fetch = || async move { home::recently_played(&s, 20).await };
         if let Some(items) = kept(&n.library.home.recently_played, QUICK, fetch).await {
             let cards: Vec<Card> = items
                 .iter()
@@ -91,7 +88,7 @@ pub fn page(nav: &Nav) -> adw::NavigationPage {
     let n = nav.clone();
     glib::spawn_future_local(async move {
         let Some(s) = n.session() else { return };
-        let fetch = async move { home::top(&s, 10).await };
+        let fetch = || async move { home::top(&s, 10).await };
         if let Some(top) = kept(&n.library.home.top, SLOW, fetch).await {
             fill(
                 &artists,
@@ -104,24 +101,6 @@ pub fn page(nav: &Nav) -> adw::NavigationPage {
         }
     });
     page
-}
-
-/// How long shelves are kept: what changes with every track, and the rest.
-const QUICK: Duration = Duration::from_secs(2 * 60);
-const SLOW: Duration = Duration::from_secs(30 * 60);
-
-/// A shelf's data: kept while fresh, otherwise fetched and kept.
-async fn kept<T, F>(fresh: &Fresh<T>, max_age: Duration, fetch: F) -> Option<Rc<T>>
-where
-    T: Send + 'static,
-    F: Future<Output = Result<T, librespot_core::Error>> + Send + 'static,
-{
-    if let Some(value) = fresh.get(max_age) {
-        return Some(value);
-    }
-    let value = Rc::new(runtime().spawn(fetch).await.ok()?.ok()?);
-    fresh.set(value.clone());
-    Some(value)
 }
 
 /// "Good morning" before noon, "Good afternoon" until six, then "Good evening".

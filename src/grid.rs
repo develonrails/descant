@@ -17,7 +17,6 @@ use gtk::{gdk, gio, glib};
 use crate::{
     images,
     nav::{Destination, Nav},
-    runtime,
     widgets::{cover_image, pick, with_header},
 };
 
@@ -278,10 +277,13 @@ fn overlaps(start: f32, length: f32, view: f32, margin: f32) -> bool {
     start < view + margin && start + length > -margin
 }
 
-/// A full-page grid of cards, filled when `load` returns.
+/// A full-page grid of cards, filled when `load` returns. `load` runs on
+/// the main loop; reads from Spotify belong on the runtime (see [`kept`]).
+///
+/// [`kept`]: crate::nav::kept
 pub fn grid_page<F>(nav: &Nav, title: &str, empty: &str, load: F) -> adw::NavigationPage
 where
-    F: std::future::Future<Output = Option<Vec<Card>>> + Send + 'static,
+    F: std::future::Future<Output = Option<Vec<Card>>> + 'static,
 {
     let store = gio::ListStore::new::<glib::BoxedAnyObject>();
     let factory = gtk::SignalListItemFactory::new();
@@ -337,8 +339,7 @@ where
         .build();
 
     glib::spawn_future_local(async move {
-        let cards = runtime().spawn(load).await.ok().flatten();
-        match cards {
+        match load.await {
             Some(cards) if !cards.is_empty() => {
                 let objects: Vec<glib::BoxedAnyObject> =
                     cards.into_iter().map(glib::BoxedAnyObject::new).collect();
