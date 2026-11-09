@@ -43,6 +43,9 @@ pub struct PlaylistPage {
     pub covers: Vec<Cover>,
     /// The rows of this page that Spotify could describe, in order.
     pub tracks: Vec<TrackInfo>,
+    /// Where each of `tracks` sits in the playlist, counting the rows that
+    /// are not shown (episodes, local files): what a change names.
+    pub rows: Vec<u32>,
 }
 
 /// An album in a grid or list.
@@ -101,13 +104,14 @@ pub async fn playlist(
         .request(&http::Method::GET, &endpoint, None, None)
         .await?;
     let content = SelectedListContent::parse_from_bytes(&bytes)?;
-    let uris = track_uris(&content);
+    let (rows, uris) = track_rows(&content, offset);
     let tracks = tracks(session, &uris).await?;
     Ok(PlaylistPage {
         name: content.attributes.name().to_string(),
         owner: content.owner_username().to_string(),
         total: content.length().max(0) as u32,
         covers: playlist_covers(&content.attributes),
+        rows: described_rows(&rows, &uris, &tracks),
         tracks,
     })
 }
@@ -454,8 +458,9 @@ pub fn summaries(content: &SelectedListContent) -> Vec<PlaylistSummary> {
         .collect()
 }
 
-/// The track rows of a playlist page; episodes and local files are skipped.
-pub fn track_uris(content: &SelectedListContent) -> Vec<String> {
+/// The track rows of a playlist page that starts at row `offset`: where each
+/// sits in the playlist, and its URI. Episodes and local files are skipped.
+pub fn track_rows(content: &SelectedListContent, offset: u32) -> (Vec<u32>, Vec<String>) {
     content
         .contents
         .as_ref()
@@ -463,12 +468,24 @@ pub fn track_uris(content: &SelectedListContent) -> Vec<String> {
             contents
                 .items
                 .iter()
-                .map(|item| item.uri())
-                .filter(|uri| uri.starts_with("spotify:track:"))
-                .map(String::from)
-                .collect()
+                .zip(offset..)
+                .filter(|(item, _)| item.uri().starts_with("spotify:track:"))
+                .map(|(item, row)| (row, item.uri().to_string()))
+                .unzip()
         })
         .unwrap_or_default()
+}
+
+/// The rows of the tracks that were described: `tracks` is `uris` (at
+/// `rows`) in order, less the ones Spotify could not describe, every copy of
+/// which is missing alike.
+pub fn described_rows(rows: &[u32], uris: &[String], tracks: &[TrackInfo]) -> Vec<u32> {
+    let mut described = tracks.iter().peekable();
+    rows.iter()
+        .zip(uris)
+        .filter(|(_, uri)| described.next_if(|t| t.uri == **uri).is_some())
+        .map(|(row, _)| *row)
+        .collect()
 }
 
 pub fn track_info(uri: &str, track: &Track) -> TrackInfo {
@@ -695,7 +712,7 @@ mod tests {
     }
 
     #[test]
-    fn a_playlist_page_keeps_only_tracks() {
+    fn a_playlist_page_keeps_only_tracks_and_where_they_sit() {
         let mut contents = ListItems::new();
         contents.items = vec![
             item("spotify:track:1111111111111111111111"),
@@ -706,12 +723,34 @@ mod tests {
         let mut content = SelectedListContent::new();
         content.contents = MessageField::some(contents);
         assert_eq!(
-            track_uris(&content),
-            vec![
-                "spotify:track:1111111111111111111111".to_string(),
-                "spotify:track:3333333333333333333333".to_string(),
-            ]
+            track_rows(&content, 100),
+            (
+                vec![100, 103],
+                vec![
+                    "spotify:track:1111111111111111111111".to_string(),
+                    "spotify:track:3333333333333333333333".to_string(),
+                ]
+            )
         );
+        assert_eq!(track_rows(&SelectedListContent::new(), 0), (vec![], vec![]));
+    }
+
+    #[test]
+    fn rows_follow_the_tracks_that_were_described() {
+        let uris: Vec<String> = ["a", "gone", "b", "a", "gone", "c"]
+            .iter()
+            .map(|u| u.to_string())
+            .collect();
+        let rows = [0, 2, 3, 5, 6, 9];
+        let described: Vec<TrackInfo> = ["a", "b", "a", "c"]
+            .iter()
+            .map(|u| TrackInfo {
+                uri: u.to_string(),
+                ..Default::default()
+            })
+            .collect();
+        assert_eq!(described_rows(&rows, &uris, &described), vec![0, 3, 5, 9]);
+        assert!(described_rows(&rows, &uris, &[]).is_empty());
     }
 
     fn image(file: &[u8], size: Size, width: i32) -> Image {

@@ -58,7 +58,12 @@ pub struct TrackPage {
     pub page: adw::NavigationPage,
     store: gio::ListStore,
     list: gtk::ListView,
+    /// On a playlist's page, where each row of `store` sits in the playlist,
+    /// which counts rows the page does not show (episodes, local files).
+    rows: PlaylistRows,
 }
+
+type PlaylistRows = Rc<std::cell::RefCell<Vec<u32>>>;
 
 impl TrackPage {
     /// The rows themselves. A track change has to reach the rows that are
@@ -189,7 +194,12 @@ impl TrackPage {
             .child(&with_header(&scroller))
             .build();
 
-        let view = Rc::new(TrackPage { page, store, list });
+        let view = Rc::new(TrackPage {
+            page,
+            store,
+            list,
+            rows: PlaylistRows::default(),
+        });
         let context = source.context(nav);
         let n = nav.clone();
         let ctx = context.clone();
@@ -213,6 +223,7 @@ impl TrackPage {
             Some(&track_actions(
                 nav,
                 &view.store,
+                &view.rows,
                 menu.this_playlist.clone(),
                 liked_page,
             )),
@@ -241,6 +252,7 @@ impl TrackPage {
         // The list model lives exactly as long as the page is shown; the
         // TrackPage value itself is not kept (closures hold nothing strongly).
         let store = self.store.downgrade();
+        let rows = self.rows.clone();
         let page = self.page.downgrade();
         let Header {
             heading,
@@ -288,6 +300,7 @@ impl TrackPage {
                                 images::show(&cover, pick(covers, HEADER_COVER, &cover));
                             }
                         }
+                        rows.borrow_mut().extend(&page.rows);
                         append(&store, page.tracks);
                         spinner.set_visible(false);
                         offset += PAGE;
@@ -512,6 +525,7 @@ fn add_menu(row: &gtk::Box, context: &Rc<MenuContext>) {
 fn track_actions(
     nav: &Nav,
     store: &gio::ListStore,
+    rows: &PlaylistRows,
     this_playlist: Option<String>,
     liked_page: bool,
 ) -> gio::SimpleActionGroup {
@@ -601,7 +615,7 @@ fn track_actions(
         }),
     );
 
-    let (n, store) = (nav.clone(), weak_store);
+    let (n, store, playlist_rows) = (nav.clone(), weak_store, rows.clone());
     action(
         "remove",
         Box::new(move |target| {
@@ -609,26 +623,32 @@ fn track_actions(
                 return;
             };
             let (uri, position) = split_target(&target);
-            let Some(rows) = store.upgrade() else { return };
-            // Which copy of the track this row is, counting the rows above it.
+            let Some(shown) = store.upgrade() else { return };
+            // Where the row sits in the playlist, and, should that have
+            // changed, which copy of the track it is among the rows above.
+            let row = playlist_rows.borrow().get(position).map(|r| *r as usize);
             let occurrence = (0..position as u32)
-                .filter_map(|i| rows.item(i).and_downcast::<glib::BoxedAnyObject>())
+                .filter_map(|i| shown.item(i).and_downcast::<glib::BoxedAnyObject>())
                 .filter(|o| o.borrow::<TrackInfo>().uri == uri)
                 .count();
             let (n, store, uri) = (n.clone(), store.clone(), uri.to_string());
+            let playlist_rows = playlist_rows.clone();
             glib::spawn_future_local(async move {
                 let s = n.session();
                 let u = uri.clone();
                 let done = runtime()
                     .spawn(async move {
-                        descant_spotify::edit::remove_from_playlist(&s, &playlist, &u, occurrence)
-                            .await
+                        descant_spotify::edit::remove_from_playlist(
+                            &s, &playlist, &u, row, occurrence,
+                        )
+                        .await
                     })
                     .await;
                 match done {
                     Ok(Ok(())) => {
                         if let Some(store) = store.upgrade() {
                             store.remove(position as u32);
+                            forget_row(&mut playlist_rows.borrow_mut(), position);
                         }
                         n.toast("Removed from the playlist");
                     }
@@ -670,6 +690,16 @@ fn track_actions(
         }),
     );
     group
+}
+
+/// The row at `position` left the playlist: the rows below it move up one.
+fn forget_row(rows: &mut Vec<u32>, position: usize) {
+    if position < rows.len() {
+        rows.remove(position);
+        for row in &mut rows[position..] {
+            *row = row.saturating_sub(1);
+        }
+    }
 }
 
 /// Clicking an album's artist line opens the (first) artist.
@@ -809,6 +839,16 @@ mod tests {
     fn subtitles_name_spotify_and_count_songs() {
         assert_eq!(playlist_line("spotify", 50), "Spotify · 50 songs");
         assert_eq!(playlist_line("1234567890", 1), "1234567890 · 1 song");
+    }
+
+    #[test]
+    fn a_removed_row_moves_the_ones_below_it_up() {
+        // Shown rows at playlist rows 0, 2 and 5 (an episode at 1, more at 3, 4).
+        let mut rows = vec![0, 2, 5];
+        forget_row(&mut rows, 1);
+        assert_eq!(rows, [0, 4]);
+        forget_row(&mut rows, 7);
+        assert_eq!(rows, [0, 4], "a row it does not know changes nothing");
     }
 
     #[test]
