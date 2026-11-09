@@ -141,6 +141,12 @@ impl LibrespotEngine {
         equalizer: EqualizerSetting,
         reports: UnboundedSender<Report>,
     ) -> Result<LibrespotEngine, Error> {
+        // Spirc asks for a client token before it connects the session, but
+        // the player has to exist by then: a thread with its own runtime,
+        // built for nothing when there is no way through. Asking first is
+        // the same request (Spirc finds the token kept), and a failed
+        // reconnect then costs a refused lookup instead of a player.
+        session.spclient().client_token().await?;
         let mixer = mixer::find(Some("softvol")).ok_or_else(|| Error::unavailable("softvol"))?(
             MixerConfig::default(),
         )?;
