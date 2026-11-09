@@ -614,10 +614,10 @@ impl Ui {
         });
     }
 
-    /// What pages get: the session, and ways back into the Ui that do not
-    /// keep it alive.
+    /// What pages get, once there is a session: the library (and through it
+    /// the session), and ways back into the Ui that do not keep it alive.
     fn nav(&self) -> Option<Nav> {
-        let session = self.library.session.borrow().clone()?;
+        self.library.session.borrow().as_ref()?;
         let me = self.me.borrow().clone();
         let to_send = me.clone();
         let send = Rc::new(move |command: Command| {
@@ -637,7 +637,6 @@ impl Ui {
             }
         });
         Some(Nav::new(
-            session,
             send,
             open,
             event,
@@ -687,6 +686,7 @@ impl Ui {
                         .as_ref()
                         .map(|c| c.albums.clone());
                     grid::grid_page(&nav, "Albums", "No Saved Albums", async move {
+                        let session = session?;
                         let uris = match saved {
                             Some(uris) => uris,
                             None => library::collection(&session).await.ok()?.albums,
@@ -700,7 +700,7 @@ impl Ui {
                 "artists" => {
                     let session = nav.session();
                     grid::grid_page(&nav, "Artists", "No Followed Artists", async move {
-                        let artists = library::followed_artists(&session).await.ok()?;
+                        let artists = library::followed_artists(&session?).await.ok()?;
                         Some(artists.iter().map(Card::artist).collect())
                     })
                 }

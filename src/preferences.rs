@@ -131,7 +131,7 @@ fn quality_row(settings: &gio::Settings, nav: Option<&Nav>) -> adw::ComboRow {
 fn account_row(nav: &Nav, dialog: &adw::PreferencesDialog) -> adw::ActionRow {
     let avatar = adw::Avatar::new(32, None, false);
     let row = adw::ActionRow::builder()
-        .title(nav.session().username())
+        .title(nav.session().map(|s| s.username()).unwrap_or_default())
         .subtitle("Signed in to Spotify")
         .build();
     row.add_prefix(&avatar);
@@ -166,7 +166,7 @@ fn account_row(nav: &Nav, dialog: &adw::PreferencesDialog) -> adw::ActionRow {
         None => {
             let n = nav.clone();
             glib::spawn_future_local(async move {
-                let session = n.session();
+                let Some(session) = n.session() else { return };
                 let asked = runtime()
                     .spawn(async move { descant_spotify::profile::me(&session).await })
                     .await;

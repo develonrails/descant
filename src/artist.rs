@@ -71,7 +71,8 @@ pub fn page(nav: &Nav, uri: &str, name: &str) -> adw::NavigationPage {
 
     let (nav, uri, weak_page) = (nav.clone(), uri.to_string(), page.downgrade());
     glib::spawn_future_local(async move {
-        let (session, u) = (nav.session(), uri.clone());
+        let Some(session) = nav.session() else { return };
+        let u = uri.clone();
         let loaded = runtime()
             .spawn(async move { library::artist(&session, &u, SINGLES_SHOWN).await })
             .await;

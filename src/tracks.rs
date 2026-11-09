@@ -48,7 +48,10 @@ impl Source {
     fn context(&self, nav: &Nav) -> String {
         match self {
             Source::Playlist { uri } | Source::Album { uri } => uri.clone(),
-            Source::Liked => format!("spotify:user:{}:collection", nav.session().username()),
+            Source::Liked => nav
+                .session()
+                .map(|s| format!("spotify:user:{}:collection", s.username()))
+                .unwrap_or_default(),
             Source::Queue { .. } => String::new(),
         }
     }
@@ -258,7 +261,7 @@ impl TrackPage {
             }
         };
         glib::spawn_future_local(async move {
-            let session = nav.session();
+            let Some(session) = nav.session() else { return };
             match source {
                 Source::Playlist { uri } => {
                     let mut offset = 0;
@@ -591,7 +594,7 @@ fn track_actions(
                 .unwrap_or_default();
             let (n, playlist, track) = (n.clone(), playlist.to_string(), track.to_string());
             glib::spawn_future_local(async move {
-                let s = n.session();
+                let Some(s) = n.session() else { return };
                 let tracks = vec![track];
                 match runtime()
                     .spawn(async move {
@@ -622,7 +625,7 @@ fn track_actions(
                 .count();
             let (n, store, uri) = (n.clone(), store.clone(), uri.to_string());
             glib::spawn_future_local(async move {
-                let s = n.session();
+                let Some(s) = n.session() else { return };
                 let u = uri.clone();
                 let done = runtime()
                     .spawn(async move {
