@@ -8,7 +8,9 @@
 //! JPEGs) keep three bytes a pixel, not four. Fetched files also go to the cache directory, so a restart does not
 //! download them again; that directory is kept under its own cap, the covers
 //! used longest ago going first. Requests for a cover already on its way
-//! share it. Reading, fetching and decoding happen off the GTK thread.
+//! share it. Reading, fetching and decoding happen off the GTK thread. The
+//! covers in memory are let go when the window is put away and when the
+//! system runs low on memory.
 
 use std::{
     cell::RefCell,
@@ -19,7 +21,7 @@ use std::{
     time::SystemTime,
 };
 
-use gtk::{gdk, glib, prelude::*};
+use gtk::{gdk, gio, glib, prelude::*};
 use tokio::sync::oneshot;
 
 use crate::runtime;
@@ -94,6 +96,8 @@ pub struct Images {
     memory: RefCell<Lru<gdk::Texture>>,
     waiting: RefCell<Waiters>,
     dir: PathBuf,
+    /// Kept so its warnings keep coming.
+    _memory_monitor: gio::MemoryMonitor,
 }
 
 thread_local! {
@@ -101,7 +105,25 @@ thread_local! {
         memory: RefCell::new(Lru::new(MEMORY_BUDGET)),
         waiting: RefCell::new(HashMap::new()),
         dir: cache_dir(),
+        _memory_monitor: release_when_memory_runs_low(),
     });
+}
+
+/// Lets go of the covers kept in memory. Those on screen stay with their
+/// widgets, and the rest are a disk read away when they are needed again.
+/// For when the window is put away while music plays on, and when the
+/// system runs low on memory.
+pub fn release() {
+    IMAGES.with(|i| i.memory.borrow_mut().clear());
+}
+
+fn release_when_memory_runs_low() -> gio::MemoryMonitor {
+    let monitor = gio::MemoryMonitor::dup_default();
+    monitor.connect_low_memory_warning(|_, level| {
+        log::debug!("low memory ({level:?}): letting go of covers");
+        release();
+    });
+    monitor
 }
 
 /// The cover at `url`, at most `pixels` on its longest side (0: as it

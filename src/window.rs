@@ -605,6 +605,8 @@ impl Ui {
         self.window.connect_close_request(move |window| {
             if ui.settings.boolean(KEEP_PLAYING) && ui.controller.borrow().is_some() {
                 window.set_visible(false);
+                // Nothing shows a cover until it comes back.
+                images::release();
                 glib::Propagation::Stop
             } else {
                 glib::Propagation::Proceed
