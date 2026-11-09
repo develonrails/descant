@@ -26,8 +26,19 @@ finish-args:
   # Media keys and the shell's media controls
   - --own-name=org.mpris.MediaPlayer2.Descant
   # librespot's player starts a tokio runtime of its own with one worker per
-  # CPU core (14 threads on a laptop) for work two handle easily.
-  - --env=TOKIO_WORKER_THREADS=2
+  # CPU core (14 threads on a laptop). The player loop runs on a thread of
+  # its own; the workers only carry its downloads, which one handles easily.
+  # Descant's own runtime sets its worker count in code and ignores this.
+  - --env=TOKIO_WORKER_THREADS=1
+  # glibc gives every thread that allocates an arena of its own, up to eight
+  # per core, and an arena only hands memory back from its top. librespot
+  # starts a thread for every track it loads, so freed memory piled up in a
+  # dozen arenas: after three days of playing, 95 MB of them. Two arenas, and
+  # a fixed threshold above which blocks are mapped (and unmapped when freed)
+  # instead of carved from an arena, keep that from building up. Fixing the
+  # threshold also stops glibc from raising it after the first large free.
+  - --env=MALLOC_ARENA_MAX=2
+  - --env=MALLOC_MMAP_THRESHOLD_=131072
   # librespot keeps the playing track (and the next) in temporary files.
   # The sandbox's /tmp is tmpfs, so they would pin RAM; /var/tmp is the
   # app's cache directory on disk, where they are page cache the kernel can
