@@ -454,10 +454,7 @@ fn track_info(item: &AudioItem) -> TrackInfo {
     let mut covers: Vec<Cover> = item
         .covers
         .iter()
-        .map(|c| Cover {
-            url: c.url.clone(),
-            width: cover_width(c),
-        })
+        .map(|c| Cover::new(&c.url, cover_width(c)))
         .collect();
     covers.sort_by_key(|c| c.width);
     TrackInfo {

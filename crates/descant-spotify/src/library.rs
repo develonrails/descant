@@ -7,7 +7,7 @@
 
 use std::collections::HashMap;
 
-use descant_core::track::{Cover, TrackInfo};
+use descant_core::track::{Cover, IMAGE_CDN, TrackInfo};
 use librespot_core::{Error, SpotifyId, session::Session};
 use librespot_protocol::{
     extended_metadata::{
@@ -512,10 +512,7 @@ pub fn playlist_covers(attributes: &ListAttributes) -> Vec<Cover> {
                 "large" => 640,
                 _ => return None, // "xlarge" repeats "large"
             };
-            Some(Cover {
-                url: image_url(p.url())?,
-                width,
-            })
+            list_picture(p.url(), width)
         })
         .collect();
     covers.sort_by_key(|c| c.width);
@@ -528,30 +525,19 @@ pub fn playlist_covers(attributes: &ListAttributes) -> Vec<Cover> {
     }
     // The CDN serves this one at whatever size it was made; ask for it as the
     // largest, so a small row scales down rather than up.
-    vec![Cover {
-        url: format!("{IMAGE_CDN}{}", hex(picture)),
-        width: 640,
-    }]
+    vec![Cover::file(picture, 640)]
 }
 
 /// A picture as a list refers to it: a web address (a mosaic Spotify already
 /// composed, say), or an image URI naming a file on the CDN.
-fn image_url(reference: &str) -> Option<String> {
+fn list_picture(reference: &str, width: u32) -> Option<Cover> {
     if reference.starts_with("https://") || reference.starts_with("http://") {
-        return Some(reference.to_string());
+        return Some(Cover::new(reference, width));
     }
     reference
         .strip_prefix("spotify:image:")
-        .map(|hex| format!("{IMAGE_CDN}{hex}"))
+        .map(|hex| Cover::new(&format!("{IMAGE_CDN}{hex}"), width))
 }
-
-/// A file id as the CDN spells it.
-fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
-}
-
-/// Spotify's image CDN, which serves a cover by its file id in hex.
-const IMAGE_CDN: &str = "https://i.scdn.co/image/";
 
 /// A cover from extended metadata, at the size the metadata names.
 pub fn cover(image: &Image) -> Option<Cover> {
@@ -568,10 +554,7 @@ pub fn cover(image: &Image) -> Option<Cover> {
             Size::XLARGE => 1280,
         },
     };
-    Some(Cover {
-        url: format!("{IMAGE_CDN}{}", hex(file)),
-        width,
-    })
+    Some(Cover::file(file, width))
 }
 
 #[cfg(test)]
@@ -678,13 +661,13 @@ mod tests {
             covers.iter().map(|c| c.width).collect::<Vec<_>>(),
             vec![60, 300, 640]
         );
-        assert_eq!(covers[0].url, "https://i.scdn.co/image/s");
+        assert_eq!(covers[0].url(), "https://i.scdn.co/image/s");
     }
 
     #[test]
     fn an_image_uri_becomes_a_cdn_address() {
         let covers = playlist_covers(&attributes(&[("default", "spotify:image:ab12")], &[]));
-        assert_eq!(covers[0].url, "https://i.scdn.co/image/ab12");
+        assert_eq!(covers[0].url(), "https://i.scdn.co/image/ab12");
     }
 
     #[test]
@@ -692,10 +675,7 @@ mod tests {
         let covers = playlist_covers(&attributes(&[], &[0xab, 0x01, 0xff]));
         assert_eq!(
             covers,
-            vec![Cover {
-                url: "https://i.scdn.co/image/ab01ff".into(),
-                width: 640,
-            }]
+            vec![Cover::new("https://i.scdn.co/image/ab01ff", 640)]
         );
     }
 
@@ -706,7 +686,7 @@ mod tests {
             &[0xab],
         ));
         assert_eq!(covers.len(), 1);
-        assert_eq!(covers[0].url, "https://i.scdn.co/image/d");
+        assert_eq!(covers[0].url(), "https://i.scdn.co/image/d");
     }
 
     #[test]
@@ -747,12 +727,12 @@ mod tests {
     #[test]
     fn covers_point_at_the_image_cdn_and_know_their_width() {
         let c = cover(&image(&[0xab, 0x01, 0xff], Size::DEFAULT, 300)).unwrap();
+        assert_eq!(c, Cover::new("https://i.scdn.co/image/ab01ff", 300));
+        // a real file id is 20 bytes
+        let file = [0xab; 20];
         assert_eq!(
-            c,
-            Cover {
-                url: "https://i.scdn.co/image/ab01ff".into(),
-                width: 300
-            }
+            cover(&image(&file, Size::LARGE, 640)).unwrap().url(),
+            format!("https://i.scdn.co/image/{}", "ab".repeat(20))
         );
         // widths missing from the response follow from the size class
         assert_eq!(cover(&image(&[1], Size::SMALL, 0)).unwrap().width, 64);

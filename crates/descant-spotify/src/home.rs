@@ -226,7 +226,7 @@ mod tests {
         assert_eq!(got.len(), 1);
         assert_eq!(got[0].name, "Discover Weekly");
         assert_eq!(got[0].description, "Your weekly mixtape of fresh music");
-        assert_eq!(got[0].covers[0].url, "https://i.scdn.co/image/d");
+        assert_eq!(got[0].covers[0].url(), "https://i.scdn.co/image/d");
     }
 
     #[test]
