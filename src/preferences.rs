@@ -299,19 +299,32 @@ impl Equalizer {
             save_pending: RefCell::new(None),
         });
         eq.show_enabled();
-        let e = eq.clone();
+        // The state holds the controls, so they reach it weakly; the page
+        // keeps it for as long as the page lives.
+        let e = Rc::downgrade(&eq);
         eq.enabled.connect_active_notify(move |row| {
+            let Some(e) = e.upgrade() else { return };
             let _ = e.settings.set_boolean(EQUALIZER, row.is_active());
             e.show_enabled();
             e.apply();
         });
-        let e = eq.clone();
-        eq.preset
-            .connect_selected_notify(move |row| e.preset_picked(row.selected()));
+        let e = Rc::downgrade(&eq);
+        eq.preset.connect_selected_notify(move |row| {
+            if let Some(e) = e.upgrade() {
+                e.preset_picked(row.selected());
+            }
+        });
         for scale in &eq.sliders {
-            let e = eq.clone();
-            scale.connect_value_changed(move |_| e.slider_moved());
+            let e = Rc::downgrade(&eq);
+            scale.connect_value_changed(move |_| {
+                if let Some(e) = e.upgrade() {
+                    e.slider_moved();
+                }
+            });
         }
+        page.connect_destroy(move |_| {
+            let _kept = &eq;
+        });
         page
     }
 
