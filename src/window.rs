@@ -20,7 +20,7 @@ use descant_playback::{
 };
 use descant_spotify::{library, pairing, store};
 use gtk::{gio, glib};
-use librespot_core::authentication::Credentials;
+use librespot_core::{authentication::Credentials, config::SessionConfig};
 use tokio::sync::mpsc;
 
 use crate::{
@@ -853,6 +853,10 @@ impl Ui {
                 resume: settings::resume(&self.settings),
                 equalizer: self.equalizer.clone(),
                 quality: settings::quality(&self.settings),
+                session: SessionConfig {
+                    tmp_dir: images::track_dir(),
+                    ..SessionConfig::default()
+                },
                 ..ControllerConfig::default()
             };
             controller::spawn(credentials, config, updates)
