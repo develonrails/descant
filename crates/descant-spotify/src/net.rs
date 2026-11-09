@@ -1,7 +1,7 @@
 //! What every request to Spotify shares: one HTTP client, the session's
 //! tokens, and a few ids and types.
 
-use std::sync::LazyLock;
+use std::{sync::LazyLock, time::Duration};
 
 use descant_core::track::{Cover, TrackInfo};
 use librespot_core::{Error, SpotifyId, session::Session};
@@ -14,8 +14,21 @@ pub(crate) const COLLECTION_TYPE: &str = "application/vnd.collection-v2.spotify.
 
 /// One client for the whole app: connections and TLS sessions are reused
 /// instead of set up again for every cover, search and shelf.
+///
+/// i.scdn.co, api-partner and spclient all speak HTTP/2 (offered via ALPN),
+/// so a grid's covers share one connection per host instead of opening one
+/// each. Every request here is small (a cover, a JSON page, a playlist
+/// change; audio goes through librespot), so a request that has not finished
+/// in 30 seconds has stalled and gives up rather than hanging its caller.
 pub fn http() -> &'static reqwest::Client {
-    static CLIENT: LazyLock<reqwest::Client> = LazyLock::new(reqwest::Client::new);
+    static CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| {
+        reqwest::Client::builder()
+            .connect_timeout(Duration::from_secs(10))
+            .timeout(Duration::from_secs(30))
+            .pool_max_idle_per_host(2)
+            .build()
+            .unwrap_or_default()
+    });
     &CLIENT
 }
 
