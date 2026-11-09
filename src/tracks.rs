@@ -18,7 +18,7 @@ use tokio::sync::mpsc;
 
 use crate::{
     images,
-    nav::{Destination, Nav},
+    nav::{Destination, Nav, track_uri},
     runtime,
     widgets::{THUMB, cover_image, format_duration, pick, with_header},
 };
@@ -300,16 +300,11 @@ impl TrackPage {
                     }
                 }
                 Source::Liked => {
-                    // Liked URIs, newest first (read at login), described a
-                    // hundred at a time.
-                    let known = nav
-                        .library
-                        .collection
-                        .borrow()
-                        .as_ref()
-                        .map(|c| c.tracks.clone());
-                    let uris = match known {
-                        Some(uris) => uris,
+                    // Liked tracks, newest first (read at login, shared, not
+                    // copied), described a hundred at a time.
+                    let known = nav.library.liked_songs.borrow().clone();
+                    let ids = match known {
+                        Some(ids) => ids,
                         None => {
                             let s = session.clone();
                             match runtime()
@@ -317,9 +312,8 @@ impl TrackPage {
                                 .await
                             {
                                 Ok(Ok(collection)) => {
-                                    let uris = collection.tracks.clone();
                                     nav.library.set_collection(collection);
-                                    uris
+                                    nav.library.liked_songs.borrow().clone().unwrap_or_default()
                                 }
                                 _ => {
                                     log::warn!("could not load Liked Songs");
@@ -329,12 +323,13 @@ impl TrackPage {
                             }
                         }
                     };
-                    subtitle.set_label(&songs(uris.len() as u32));
-                    for (i, chunk) in uris.chunks(PAGE as usize).enumerate() {
+                    subtitle.set_label(&songs(ids.len() as u32));
+                    for (i, chunk) in ids.chunks(PAGE as usize).enumerate() {
                         if i > 0 && !end_is_near(&mut more).await {
                             return;
                         }
-                        let (s, chunk) = (session.clone(), chunk.to_vec());
+                        let chunk: Vec<String> = chunk.iter().map(track_uri).collect();
+                        let s = session.clone();
                         let tracks = runtime()
                             .spawn(async move { library::tracks(&s, &chunk).await })
                             .await;
@@ -454,7 +449,7 @@ fn add_menu(row: &gtk::Box, context: &Rc<MenuContext>) {
         let menu = gio::Menu::new();
         let first = gio::Menu::new();
         first.append_item(&item("Add to Queue", "track.queue", &target));
-        let liked = context.nav.library.liked.borrow().contains(uri);
+        let liked = context.nav.library.is_liked(uri);
         first.append_item(&item(
             if liked {
                 "Remove from Liked Songs"
@@ -564,7 +559,7 @@ fn track_actions(
         "like",
         Box::new(move |target| {
             let (uri, position) = split_target(&target);
-            let (uri, liked) = (uri.to_string(), !n.library.liked.borrow().contains(uri));
+            let (uri, liked) = (uri.to_string(), !n.library.is_liked(uri));
             let (n, store) = (n.clone(), store.clone());
             glib::spawn_future_local(async move {
                 // On Liked Songs, an unliked track leaves the list.
