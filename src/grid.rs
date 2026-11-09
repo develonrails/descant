@@ -1,7 +1,10 @@
 //! Grids of albums and artists, and the cards in them.
 //!
 //! The Albums and Artists pages are `GtkGridView`s (only visible cards
-//! exist); the artist page uses small `GtkFlowBox`es of the same cards.
+//! exist); the artist page, Home's shelves and search use `GtkFlowBox`es of
+//! the same cards, whose covers come as the cards near the screen.
+
+use std::{cell::RefCell, rc::Rc};
 
 use adw::prelude::*;
 use descant_core::track::Cover;
@@ -9,7 +12,7 @@ use descant_spotify::{
     library::{AlbumSummary, ArtistSummary, PlaylistSummary},
     podcasts::ShowSummary,
 };
-use gtk::{gio, glib};
+use gtk::{gdk, gio, glib};
 
 use crate::{
     images,
@@ -127,6 +130,12 @@ pub fn card_widget() -> gtk::Box {
 }
 
 pub fn fill(widget: &gtk::Widget, card: &Card) {
+    let cover = label(widget, card);
+    images::show(&cover, pick(&card.covers, CARD, &cover));
+}
+
+/// Gives a card everything but its cover; returns the image the cover goes in.
+fn label(widget: &gtk::Widget, card: &Card) -> gtk::Image {
     let cover = widget
         .first_child()
         .and_downcast::<gtk::Image>()
@@ -149,10 +158,11 @@ pub fn fill(widget: &gtk::Widget, card: &Card) {
     title.set_label(&card.title);
     subtitle.set_label(&card.subtitle);
     subtitle.set_visible(!card.subtitle.is_empty());
-    images::show(&cover, pick(&card.covers, CARD, &cover));
+    cover
 }
 
 /// A flow box of cards that open their album or artist; for short lists.
+/// Their covers come as they near the screen ([`covers_in_view`]).
 pub fn flow(nav: &Nav, cards: &[Card]) -> gtk::FlowBox {
     let flow = gtk::FlowBox::builder()
         .selection_mode(gtk::SelectionMode::None)
@@ -162,16 +172,110 @@ pub fn flow(nav: &Nav, cards: &[Card]) -> gtk::FlowBox {
         .build();
     for card in cards {
         let widget = card_widget();
-        fill(widget.upcast_ref(), card);
+        label(widget.upcast_ref(), card);
         flow.append(&widget);
     }
-    let (nav, cards) = (nav.clone(), cards.to_vec());
+    let (nav, cards) = (nav.clone(), Rc::new(cards.to_vec()));
+    covers_in_view(&flow, cards.clone());
     flow.connect_child_activated(move |_, child| {
         if let Some(card) = cards.get(child.index() as usize) {
             nav.open(card.destination());
         }
     });
     flow
+}
+
+/// How far outside the visible part of a page a card fetches its cover, in
+/// logical pixels: one card ahead.
+const AHEAD: f32 = CARD as f32;
+
+/// Which cards of a flow box still wait for their cover, and the frame
+/// clock that checks them while the box is on screen.
+struct Pending {
+    cards: Vec<usize>,
+    watch: Option<(gdk::FrameClock, glib::SignalHandlerId)>,
+}
+
+impl Pending {
+    fn stop(&mut self) {
+        if let Some((clock, handler)) = self.watch.take() {
+            clock.disconnect(handler);
+        }
+    }
+}
+
+/// Gives the cards of `flow` their covers once they come within [`AHEAD`]
+/// of what every scrolled window around them shows. A shelf on Home shows
+/// five or six of its twenty cards and an artist can have a hundred albums;
+/// the cards nobody scrolls to fetch and decode nothing.
+///
+/// Checked after each frame the window paints while the box is on screen
+/// and covers are still to come: scrolling and resizing both paint, and
+/// nothing is checked once every card has its cover.
+fn covers_in_view(flow: &gtk::FlowBox, cards: Rc<Vec<Card>>) {
+    let pending = Rc::new(RefCell::new(Pending {
+        cards: (0..cards.len()).collect(),
+        watch: None,
+    }));
+    let p = pending.clone();
+    flow.connect_map(move |flow| {
+        let Some(clock) = flow.frame_clock() else {
+            return;
+        };
+        let mut state = p.borrow_mut();
+        if state.cards.is_empty() || state.watch.is_some() {
+            return;
+        }
+        let (weak, cards, check) = (flow.downgrade(), cards.clone(), p.clone());
+        let handler = clock.connect_after_paint(move |_| {
+            let mut state = check.borrow_mut();
+            match weak.upgrade() {
+                Some(flow) => reveal(&flow, &cards, &mut state.cards),
+                None => state.cards.clear(),
+            }
+            if state.cards.is_empty() {
+                state.stop();
+            }
+        });
+        state.watch = Some((clock, handler));
+    });
+    flow.connect_unmap(move |_| pending.borrow_mut().stop());
+}
+
+/// Shows the covers of the `waiting` cards that are near the screen, and
+/// takes them off the list.
+fn reveal(flow: &gtk::FlowBox, cards: &[Card], waiting: &mut Vec<usize>) {
+    let scrollers: Vec<gtk::ScrolledWindow> = std::iter::successors(flow.parent(), |w| w.parent())
+        .filter_map(|w| w.downcast::<gtk::ScrolledWindow>().ok())
+        .collect();
+    waiting.retain(|&i| {
+        let (Some(child), Some(card)) = (flow.child_at_index(i as i32), cards.get(i)) else {
+            return false;
+        };
+        let near = |scroller: &gtk::ScrolledWindow| {
+            child.compute_bounds(scroller).is_some_and(|b| {
+                overlaps(b.x(), b.width(), scroller.width() as f32, AHEAD)
+                    && overlaps(b.y(), b.height(), scroller.height() as f32, AHEAD)
+            })
+        };
+        if !scrollers.iter().all(near) {
+            return true;
+        }
+        if let Some(cover) = child
+            .child()
+            .and_then(|c| c.first_child())
+            .and_downcast::<gtk::Image>()
+        {
+            images::show(&cover, pick(&card.covers, CARD, &cover));
+        }
+        false
+    });
+}
+
+/// Whether a span from `start`, `length` long, comes within `margin` of a
+/// view `0..view` along the same axis.
+fn overlaps(start: f32, length: f32, view: f32, margin: f32) -> bool {
+    start < view + margin && start + length > -margin
 }
 
 /// A full-page grid of cards, filled when `load` returns.
@@ -245,4 +349,19 @@ where
         }
     });
     page
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cards_near_the_view_count_as_in_it() {
+        // a 160 px card in a 600 px view, one card's margin either side
+        assert!(overlaps(0.0, 160.0, 600.0, 160.0));
+        assert!(overlaps(700.0, 160.0, 600.0, 160.0)); // just past the end
+        assert!(!overlaps(760.0, 160.0, 600.0, 160.0)); // a card further
+        assert!(overlaps(-300.0, 160.0, 600.0, 160.0)); // scrolled just past
+        assert!(!overlaps(-320.0, 160.0, 600.0, 160.0));
+    }
 }
