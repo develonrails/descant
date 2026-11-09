@@ -63,7 +63,7 @@ pub fn page(nav: &Nav) -> adw::NavigationPage {
 
     let n = nav.clone();
     glib::spawn_future_local(async move {
-        let s = n.session();
+        let Some(s) = n.session() else { return };
         let fetch = async move { home::made_for_you(&s).await };
         if let Some(list) = kept(&n.library.home.made_for_you, SLOW, fetch).await {
             fill(
@@ -74,7 +74,7 @@ pub fn page(nav: &Nav) -> adw::NavigationPage {
     });
     let n = nav.clone();
     glib::spawn_future_local(async move {
-        let s = n.session();
+        let Some(s) = n.session() else { return };
         let fetch = async move { home::recently_played(&s, 20).await };
         if let Some(items) = kept(&n.library.home.recently_played, QUICK, fetch).await {
             let cards: Vec<Card> = items
@@ -90,7 +90,7 @@ pub fn page(nav: &Nav) -> adw::NavigationPage {
     });
     let n = nav.clone();
     glib::spawn_future_local(async move {
-        let s = n.session();
+        let Some(s) = n.session() else { return };
         let fetch = async move { home::top(&s, 10).await };
         if let Some(top) = kept(&n.library.home.top, SLOW, fetch).await {
             fill(

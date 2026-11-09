@@ -176,10 +176,10 @@ impl Library {
     }
 }
 
+/// Holds no session of its own: pages outlive reconnects, and one kept here
+/// would keep every replaced session alive with the page.
 #[derive(Clone)]
 pub struct Nav {
-    /// The session when the page was built; used only if the shared one is gone.
-    initial: Session,
     send: Rc<dyn Fn(Command)>,
     open: Rc<dyn Fn(Destination)>,
     event: Rc<dyn Fn(Event)>,
@@ -190,7 +190,6 @@ pub struct Nav {
 
 impl Nav {
     pub fn new(
-        session: Session,
         send: Rc<dyn Fn(Command)>,
         open: Rc<dyn Fn(Destination)>,
         event: Rc<dyn Fn(Event)>,
@@ -198,7 +197,6 @@ impl Nav {
         library: Rc<Library>,
     ) -> Nav {
         Nav {
-            initial: session,
             send,
             open,
             event,
@@ -207,23 +205,22 @@ impl Nav {
         }
     }
 
-    /// The current session (the newest after a reconnect).
-    pub fn session(&self) -> Session {
-        self.library
-            .session
-            .borrow()
-            .clone()
-            .unwrap_or_else(|| self.initial.clone())
+    /// The current session (the newest after a reconnect); none once logged
+    /// out, when whatever a page was still doing has no one to do it for.
+    pub fn session(&self) -> Option<Session> {
+        self.library.session.borrow().clone()
     }
 
     /// Reads which shows are followed and which episodes saved, the first
     /// time a page with podcasts needs it; listeners who never open one never
     /// pay for it.
     pub async fn podcast_state(&self) {
+        let Some(session) = self.session() else {
+            return;
+        };
         if self.library.podcasts_read.replace(true) {
             return;
         }
-        let session = self.session();
         let read = crate::runtime()
             .spawn(async move {
                 use descant_spotify::podcasts::saved_uris;
@@ -244,7 +241,9 @@ impl Nav {
 
     /// Follows or unfollows a show.
     pub async fn set_followed(&self, uri: String, followed: bool) -> bool {
-        let session = self.session();
+        let Some(session) = self.session() else {
+            return false;
+        };
         let u = uri.clone();
         let done = crate::runtime()
             .spawn(async move { descant_spotify::edit::set_followed(&session, &u, followed).await })
@@ -268,7 +267,9 @@ impl Nav {
 
     /// Puts an episode in Your Episodes or takes it out.
     pub async fn set_saved_episode(&self, uri: String, saved: bool) -> bool {
-        let session = self.session();
+        let Some(session) = self.session() else {
+            return false;
+        };
         let u = uri.clone();
         let done = crate::runtime()
             .spawn(
@@ -294,7 +295,9 @@ impl Nav {
 
     /// Likes or unlikes a track, and tells everyone.
     pub async fn set_liked(&self, uri: String, liked: bool) -> bool {
-        let session = self.session();
+        let Some(session) = self.session() else {
+            return false;
+        };
         let u = uri.clone();
         let done = crate::runtime()
             .spawn(async move { descant_spotify::edit::set_liked(&session, &u, liked).await })
@@ -340,7 +343,9 @@ impl Nav {
 
     /// The user's own playlists (which they can add to): uri and name.
     pub fn own_playlists(&self) -> Vec<(String, String)> {
-        let me = self.session().username();
+        let Some(me) = self.session().map(|s| s.username()) else {
+            return Vec::new();
+        };
         self.library
             .playlists
             .borrow()

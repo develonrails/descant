@@ -91,7 +91,8 @@ pub fn page(nav: &Nav) -> adw::NavigationPage {
         );
         glib::spawn_future_local(async move {
             // Music and podcasts are two searches, sent together.
-            let (session, s, t) = (nav.session(), nav.session(), term.clone());
+            let Some(session) = nav.session() else { return };
+            let (s, t) = (session.clone(), term.clone());
             let music =
                 runtime().spawn(async move { search::search(&session, &term, LIMIT).await });
             let shows = runtime().spawn(async move {

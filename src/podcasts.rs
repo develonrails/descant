@@ -282,7 +282,7 @@ pub fn show_page(nav: &Nav, uri: &str, name: &str) -> adw::NavigationPage {
     let (n, u, weak_page) = (nav.clone(), uri.to_string(), page.downgrade());
     let (shown, refresh) = (line.clone(), show_line.clone());
     glib::spawn_future_local(async move {
-        let session = n.session();
+        let Some(session) = n.session() else { return };
         let found = runtime()
             .spawn(async move { podcasts::show(&session, &u).await })
             .await;
@@ -340,7 +340,7 @@ pub fn show_page(nav: &Nav, uri: &str, name: &str) -> adw::NavigationPage {
             more.set_visible(false);
             spinner.set_visible(true);
             glib::spawn_future_local(async move {
-                let session = nav.session();
+                let Some(session) = nav.session() else { return };
                 let found = runtime()
                     .spawn(async move { podcasts::episodes(&session, &uri, offset, PAGE).await })
                     .await;
@@ -395,7 +395,7 @@ fn show_followed(button: &gtk::Button, followed: bool) {
 pub fn podcasts_page(nav: &Nav) -> adw::NavigationPage {
     let session = nav.session();
     grid::grid_page(nav, "Podcasts", "No Followed Podcasts", async move {
-        let shows = podcasts::followed(&session).await.ok()?;
+        let shows = podcasts::followed(&session?).await.ok()?;
         Some(shows.iter().map(Card::show).collect())
     })
 }
@@ -438,7 +438,7 @@ pub fn saved_page(nav: &Nav) -> adw::NavigationPage {
         .build();
     let nav = nav.clone();
     glib::spawn_future_local(async move {
-        let session = nav.session();
+        let Some(session) = nav.session() else { return };
         let found = runtime()
             .spawn(async move { podcasts::saved_episodes(&session).await })
             .await;
@@ -493,7 +493,7 @@ pub fn home_shelves(nav: &Nav, continuing: &gtk::Box, new: &gtk::Box) {
         let episodes = match nav.library.home.episodes.get(HOME_KEPT) {
             Some(kept) => kept,
             None => {
-                let session = nav.session();
+                let Some(session) = nav.session() else { return };
                 let read = runtime()
                     .spawn(async move {
                         let shows = podcasts::followed(&session).await.ok()?;
