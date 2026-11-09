@@ -2,7 +2,8 @@
 //!
 //! librespot's player pauses when its sink fails to start or write, but calls
 //! `exit(1)` when it fails to *stop* — fine for a daemon under systemd, fatal
-//! for a desktop app. [`GuardedSink`] wraps the real sink (PulseAudio), reports
+//! for a desktop app. [`GuardedSink`] wraps the real sink
+//! ([`PulseSink`](crate::pulse::PulseSink)), reports
 //! every failure, never lets a stop failure through, and builds a fresh sink
 //! on the next start so a restarted PipeWire is picked up.
 

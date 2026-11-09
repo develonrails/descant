@@ -459,6 +459,8 @@ name = "descant-playback"
 version = "0.2.1"
 dependencies = [
  "descant-core",
+ "libpulse-binding",
+ "libpulse-simple-binding",
  "librespot-connect",
  "librespot-core",
  "librespot-metadata",
@@ -1730,8 +1732,6 @@ source = "git+https://github.com/librespot-org/librespot?rev=99b6088bf3ea028f901
 dependencies = [
  "form_urlencoded",
  "futures-util",
- "libpulse-binding",
- "libpulse-simple-binding",
  "librespot-audio",
  "librespot-core",
  "librespot-metadata",
