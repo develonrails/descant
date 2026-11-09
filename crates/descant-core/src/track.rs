@@ -27,19 +27,25 @@ impl TrackInfo {
         self.artists.join(", ")
     }
 
-    /// The smallest cover at least `min_width` wide, else the largest there is.
+    /// The smallest cover wide enough for `min_width`, else the largest there
+    /// is; see [`cover_at_least`].
     pub fn cover_for(&self, min_width: u32) -> Option<&Cover> {
         cover_at_least(&self.covers, min_width)
     }
 }
 
-/// The smallest of `covers` (smallest first) at least `min_width` wide, else
-/// the largest there is. Fetching the right size is most of what keeps album
-/// art cheap.
+/// The smallest of `covers` (smallest first) wide enough for `min_width`,
+/// else the largest there is. Fetching the right size is most of what keeps
+/// album art cheap.
+///
+/// "Wide enough" allows a sixteenth short: a 160 px card at 200 % fills 320
+/// pixels, and the 300 px rendition drawn 7 % larger there looks the same as
+/// the 640 px one cut down, for a quarter of the download and of the decode.
+/// Further short than that, the larger rendition is taken and cut to size.
 pub fn cover_at_least(covers: &[Cover], min_width: u32) -> Option<&Cover> {
     covers
         .iter()
-        .find(|c| c.width >= min_width)
+        .find(|c| u64::from(c.width) * 16 >= u64::from(min_width) * 15)
         .or_else(|| covers.last())
 }
 
@@ -77,7 +83,13 @@ mod tests {
     fn picks_the_smallest_cover_that_is_big_enough() {
         assert_eq!(info().cover_for(48).unwrap().url, "s");
         assert_eq!(info().cover_for(64).unwrap().url, "s");
-        assert_eq!(info().cover_for(65).unwrap().url, "m");
+        assert_eq!(info().cover_for(65).unwrap().url, "s");
+        assert_eq!(info().cover_for(68).unwrap().url, "s");
+        assert_eq!(info().cover_for(69).unwrap().url, "m");
+        assert_eq!(info().cover_for(300).unwrap().url, "m");
+        // a 160 px card at 200 %: the 300 px file, not the 640 px one
+        assert_eq!(info().cover_for(320).unwrap().url, "m");
+        assert_eq!(info().cover_for(321).unwrap().url, "l");
         assert_eq!(info().cover_for(2000).unwrap().url, "l");
         assert_eq!(TrackInfo::default().cover_for(64), None);
     }
