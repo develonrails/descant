@@ -56,10 +56,10 @@ pub(crate) fn covers(sources: &Value) -> Vec<Cover> {
         .into_iter()
         .flatten()
         .filter_map(|s| {
-            Some(Cover {
-                url: s["url"].as_str()?.to_string(),
-                width: s["width"].as_u64().unwrap_or(300) as u32,
-            })
+            Some(Cover::new(
+                s["url"].as_str()?,
+                s["width"].as_u64().unwrap_or(300) as u32,
+            ))
         })
         .collect();
     covers.sort_by_key(|c| c.width);

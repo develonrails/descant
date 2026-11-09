@@ -34,8 +34,8 @@ pub fn cover_image(size: i32, class: &str) -> gtk::Image {
 }
 
 /// The cover URL to fetch for an image of `size` logical pixels.
-pub fn pick<'a>(covers: &'a [Cover], size: i32, widget: &impl IsA<gtk::Widget>) -> Option<&'a str> {
-    cover_at_least(covers, device_pixels(size, widget)).map(|c| c.url.as_str())
+pub fn pick(covers: &[Cover], size: i32, widget: &impl IsA<gtk::Widget>) -> Option<String> {
+    cover_at_least(covers, device_pixels(size, widget)).map(Cover::url)
 }
 
 /// The screen pixels `size` logical pixels take where `widget` is shown.

@@ -519,7 +519,7 @@ fn metadata(info: &TrackInfo) -> glib::Variant {
         &(i64::from(info.duration_ms) * 1000).to_variant(),
     );
     if let Some(cover) = info.cover_for(300) {
-        dict.insert_value("mpris:artUrl", &cover.url.to_variant());
+        dict.insert_value("mpris:artUrl", &cover.url().to_variant());
     }
     dict.end()
 }

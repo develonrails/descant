@@ -173,7 +173,7 @@ async fn texture(url: String, pixels: u32) -> Option<gdk::Texture> {
 /// Shows the cover at `url` in `image`, unless the image has been given
 /// another cover by the time it arrives (rows are recycled while scrolling).
 /// The image's widget name holds the URL it should show.
-pub fn show(image: &gtk::Image, url: Option<&str>) {
+pub fn show(image: &gtk::Image, url: Option<String>) {
     let Some(url) = url else {
         image.set_paintable(None::<&gdk::Paintable>);
         image.set_widget_name("");
@@ -183,19 +183,19 @@ pub fn show(image: &gtk::Image, url: Option<&str>) {
     if image.widget_name() == url && image.paintable().is_some() {
         return;
     }
-    image.set_widget_name(url);
+    image.set_widget_name(&url);
     let pixels = match image.pixel_size() {
         size if size > 0 => crate::widgets::device_pixels(size, image),
         _ => 0,
     };
     // In memory: no detour through the main loop, so no blank frame.
-    let key = memory_key(url, pixels);
+    let key = memory_key(&url, pixels);
     if let Some(texture) = IMAGES.with(|i| i.memory.borrow_mut().get(&key)) {
         image.set_paintable(Some(&texture));
         return;
     }
     image.set_paintable(None::<&gdk::Paintable>);
-    let (image, url) = (image.clone(), url.to_string());
+    let image = image.clone();
     glib::spawn_future_local(async move {
         let texture = texture(url.clone(), pixels).await;
         if image.widget_name() == url.as_str() {
