@@ -3,7 +3,7 @@
 
 use std::{
     cell::{Cell, RefCell},
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     rc::Rc,
     time::{Duration, Instant},
 };
@@ -70,6 +70,13 @@ pub struct Library {
     /// Saved albums newest first, once read.
     pub saved_albums: RefCell<Option<Vec<String>>>,
     pub playlists: RefCell<Vec<PlaylistSummary>>,
+    /// When the collection and the playlists were last asked for (`None`:
+    /// never, or the read failed), so a reconnect can keep a recent read.
+    pub collection_read: Cell<Option<Instant>>,
+    pub playlists_read: Cell<Option<Instant>>,
+    /// Covers found for playlists the rootlist gives none, by URI, so a
+    /// reload of the playlists does not have to look for them again.
+    pub found_covers: RefCell<HashMap<String, Vec<Cover>>>,
     /// Home's shelves, kept a while so going back to Home costs nothing.
     pub home: HomeShelves,
     /// The library places, kept the same way.
@@ -181,6 +188,20 @@ impl<T> Fresh<T> {
     }
 }
 
+/// How long a read of the collection or the playlists stands in for a new
+/// one when the session is replaced. A reconnect follows every suspend and
+/// network change, and Liked Songs alone is twenty requests for 10,000
+/// songs; what changes here is already applied as it happens, so a read
+/// only goes stale through other devices. A quarter of an hour lets a
+/// network blip or a quality change pass without a reload, while a laptop
+/// that slept through lunch reads again.
+pub const LIBRARY_KEPT: Duration = Duration::from_secs(15 * 60);
+
+/// Whether a read made at `read` (if ever) is too old at `now`.
+pub fn stale(read: Option<Instant>, now: Instant) -> bool {
+    read.is_none_or(|at| now.saturating_duration_since(at) >= LIBRARY_KEPT)
+}
+
 impl Library {
     /// Fills `image` once a cover for the playlist `uri` is found.
     pub fn await_cover(&self, uri: &str, image: &gtk::Image) {
@@ -221,6 +242,7 @@ impl Library {
             self.places.albums.clear();
         }
         *albums = Some(collection.albums);
+        self.collection_read.set(Some(Instant::now()));
     }
 
     /// Whether the track `uri` is in Liked Songs, as far as is known.
@@ -269,6 +291,9 @@ impl Library {
         self.liked_songs.take();
         self.saved_albums.take();
         self.playlists.take();
+        self.collection_read.take();
+        self.playlists_read.take();
+        self.found_covers.take();
         self.profile.take();
         self.followed_shows.take();
         self.saved_episodes.take();
@@ -574,6 +599,31 @@ mod tests {
         library.clear();
         assert!(library.places.shows.get(SLOW).is_none());
         assert!(library.places.episodes.get(SLOW).is_none());
+    }
+
+    #[test]
+    fn a_read_is_kept_for_a_quarter_of_an_hour() {
+        let read = Instant::now();
+        assert!(stale(None, read));
+        assert!(!stale(Some(read), read));
+        assert!(!stale(
+            Some(read),
+            read + LIBRARY_KEPT - Duration::from_secs(1)
+        ));
+        assert!(stale(Some(read), read + LIBRARY_KEPT));
+    }
+
+    #[test]
+    fn logging_out_forgets_when_the_library_was_read() {
+        let library = library(&['a']);
+        library.collection_read.set(Some(Instant::now()));
+        library
+            .found_covers
+            .borrow_mut()
+            .insert("spotify:playlist:x".into(), vec![Cover::new("u", 64)]);
+        library.clear();
+        assert!(library.collection_read.get().is_none());
+        assert!(library.found_covers.borrow().is_empty());
     }
 
     #[test]
