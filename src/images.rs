@@ -4,7 +4,8 @@
 //! size they are shown at (the 64 px rendition for a row, not the 640 px one),
 //! decoded, shrunk to the pixels they fill on screen (Spotify's 300 px
 //! rendition for a 160 px card at 150 % is cut to 240 px), and kept in an
-//! LRU bounded by decoded bytes. Fetched files also go to the cache directory, so a restart does not
+//! LRU bounded by decoded bytes. Covers without transparency (Spotify's are
+//! JPEGs) keep three bytes a pixel, not four. Fetched files also go to the cache directory, so a restart does not
 //! download them again; that directory is kept under its own cap, the covers
 //! used longest ago going first. Requests for a cover already on its way
 //! share it. Reading, fetching and decoding happen off the GTK thread.
@@ -23,7 +24,7 @@ use tokio::sync::oneshot;
 
 use crate::runtime;
 
-/// Decoded covers kept in memory, in bytes (width × height × 4); covers on
+/// Decoded covers kept in memory, in bytes (width × height × bytes a pixel); covers on
 /// screen stay alive through their widgets anyway, and the disk is close.
 const MEMORY_BUDGET: usize = 12 * 1024 * 1024;
 /// Cover files kept on disk, in bytes.
@@ -158,7 +159,7 @@ async fn texture(url: String, pixels: u32) -> Option<gdk::Texture> {
         .ok()
         .flatten();
     if let Some(t) = &texture {
-        let cost = (t.width().max(1) * t.height().max(1) * 4) as usize;
+        let cost = (t.width().max(1) * t.height().max(1)) as usize * bytes_per_pixel(t.format());
         images
             .memory
             .borrow_mut()
@@ -216,19 +217,70 @@ fn decode(bytes: Vec<u8>, pixels: u32) -> Option<gdk::Texture> {
     let Some((to_width, to_height)) = fit(width, height, pixels as usize) else {
         return Some(texture);
     };
-    let format = gdk::MemoryFormat::R8g8b8a8Premultiplied;
-    let mut downloader = gdk::TextureDownloader::new(&texture);
-    downloader.set_format(format);
-    let (data, stride) = downloader.download_bytes();
-    let small = shrink(&data, stride, (width, height), (to_width, to_height));
+    // Asked for in the layout it already has, GTK hands over the decoded
+    // pixels themselves: a JPEG decodes to three bytes a pixel, and is shrunk
+    // from there without a four-byte copy of the whole picture first.
+    let (format, channels) = working_format(texture.format());
+    let (data, stride) = {
+        let mut downloader = gdk::TextureDownloader::new(&texture);
+        downloader.set_format(format);
+        downloader.download_bytes()
+    };
+    // When a copy was made (covers with alpha), the decode it came from goes
+    // before shrinking.
+    drop(texture);
+    let small = shrink(
+        &data,
+        stride,
+        channels,
+        (width, height),
+        (to_width, to_height),
+    );
     let small = gdk::MemoryTexture::new(
         to_width as i32,
         to_height as i32,
         format,
         &glib::Bytes::from_owned(small),
-        to_width * 4,
+        to_width * channels,
     );
     Some(small.upcast())
+}
+
+/// The layout a cover of `source` layout is shrunk and kept in, and its
+/// bytes a pixel: grey stays one channel, colour without alpha three, and
+/// anything with alpha four, premultiplied so averaging does not bleed the
+/// colour of transparent pixels.
+fn working_format(source: gdk::MemoryFormat) -> (gdk::MemoryFormat, usize) {
+    use gdk::MemoryFormat as F;
+    match source {
+        F::G8 | F::G16 => (F::G8, 1),
+        F::R8g8b8
+        | F::B8g8r8
+        | F::R8g8b8x8
+        | F::B8g8r8x8
+        | F::X8r8g8b8
+        | F::X8b8g8r8
+        | F::R16g16b16
+        | F::R16g16b16Float
+        | F::R32g32b32Float => (F::R8g8b8, 3),
+        _ => (F::R8g8b8a8Premultiplied, 4),
+    }
+}
+
+/// What a pixel of `format` takes in memory, for the cache's budget.
+fn bytes_per_pixel(format: gdk::MemoryFormat) -> usize {
+    use gdk::MemoryFormat as F;
+    match format {
+        F::G8 | F::A8 => 1,
+        F::G8a8 | F::G8a8Premultiplied | F::G16 | F::A16 | F::A16Float => 2,
+        F::R8g8b8 | F::B8g8r8 => 3,
+        F::R16g16b16 | F::R16g16b16Float => 6,
+        F::R16g16b16a16 | F::R16g16b16a16Premultiplied => 8,
+        F::R16g16b16a16Float | F::R16g16b16a16FloatPremultiplied => 8,
+        F::R32g32b32Float => 12,
+        F::R32g32b32a32Float | F::R32g32b32a32FloatPremultiplied => 16,
+        _ => 4,
+    }
 }
 
 /// The size that fits `pixels` on the longest side, or `None` when the image
@@ -259,22 +311,30 @@ fn spans(from: usize, to: usize) -> Vec<Vec<(usize, f32)>> {
         .collect()
 }
 
-/// Shrinks 4-byte pixels by averaging the area each target pixel covers.
-fn shrink(data: &[u8], stride: usize, from: (usize, usize), to: (usize, usize)) -> Vec<u8> {
+/// Shrinks pixels of `channels` bytes (one to four) by averaging the area
+/// each target pixel covers.
+fn shrink(
+    data: &[u8],
+    stride: usize,
+    channels: usize,
+    from: (usize, usize),
+    to: (usize, usize),
+) -> Vec<u8> {
     let (columns, rows) = (spans(from.0, to.0), spans(from.1, to.1));
-    let mut out = Vec::with_capacity(to.0 * to.1 * 4);
+    let mut out = Vec::with_capacity(to.0 * to.1 * channels);
     for row in &rows {
         for column in &columns {
             let mut sum = [0f32; 4];
+            let sum = &mut sum[..channels];
             for &(y, wy) in row {
                 for &(x, wx) in column {
-                    let at = y * stride + x * 4;
+                    let at = y * stride + x * channels;
                     for (channel, total) in sum.iter_mut().enumerate() {
                         *total += f32::from(data[at + channel]) * wy * wx;
                     }
                 }
             }
-            out.extend(sum.map(|v| v.round().clamp(0.0, 255.0) as u8));
+            out.extend(sum.iter().map(|v| v.round().clamp(0.0, 255.0) as u8));
         }
     }
     out
@@ -489,14 +549,46 @@ mod tests {
         // a 2×2 image: black, white / white, black → one mid-grey pixel
         let (b, w) = ([0, 0, 0, 255], [255, 255, 255, 255]);
         let data: Vec<u8> = [b, w, w, b].concat();
-        assert_eq!(shrink(&data, 8, (2, 2), (1, 1)), vec![128, 128, 128, 255]);
+        assert_eq!(
+            shrink(&data, 8, 4, (2, 2), (1, 1)),
+            vec![128, 128, 128, 255]
+        );
+    }
+
+    #[test]
+    fn opaque_pixels_shrink_in_three_bytes_and_grey_in_one() {
+        // black, white / white, black, each row padded to a stride of 8
+        // bytes, as a texture's rows may be; the padding (9) is skipped
+        let rgb: Vec<u8> = [
+            &[0u8, 0, 0, 255, 255, 255, 9, 9][..],
+            &[255, 255, 255, 0, 0, 0, 9, 9][..],
+        ]
+        .concat();
+        assert_eq!(shrink(&rgb, 8, 3, (2, 2), (1, 1)), vec![128, 128, 128]);
+        let grey = [0u8, 255, 255, 0];
+        assert_eq!(shrink(&grey, 2, 1, (2, 2), (1, 1)), vec![128]);
+    }
+
+    #[test]
+    fn covers_without_alpha_keep_three_bytes_a_pixel() {
+        use gdk::MemoryFormat as F;
+        assert_eq!(working_format(F::R8g8b8), (F::R8g8b8, 3));
+        assert_eq!(working_format(F::B8g8r8x8), (F::R8g8b8, 3));
+        assert_eq!(working_format(F::G8), (F::G8, 1));
+        assert_eq!(working_format(F::R8g8b8a8), (F::R8g8b8a8Premultiplied, 4));
+        // what is kept is what is counted
+        for source in [F::R8g8b8, F::G8, F::R8g8b8a8, F::R16g16b16a16] {
+            let (kept, channels) = working_format(source);
+            assert_eq!(bytes_per_pixel(kept), channels);
+        }
+        assert_eq!(bytes_per_pixel(F::R16g16b16a16), 8);
     }
 
     #[test]
     fn a_flat_colour_stays_flat_at_any_ratio() {
         let pixel = [10u8, 120, 200, 255];
         let data: Vec<u8> = pixel.repeat(300 * 300);
-        let out = shrink(&data, 300 * 4, (300, 300), (240, 240));
+        let out = shrink(&data, 300 * 4, 4, (300, 300), (240, 240));
         assert_eq!(out.len(), 240 * 240 * 4);
         assert!(out.chunks(4).all(|p| p == pixel));
     }
