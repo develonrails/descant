@@ -8,7 +8,9 @@
 //! JPEGs) keep three bytes a pixel, not four. Fetched files also go to the cache directory, so a restart does not
 //! download them again; that directory is kept under its own cap, the covers
 //! used longest ago going first. Requests for a cover already on its way
-//! share it. Reading, fetching and decoding happen off the GTK thread. The
+//! share it. Reading, fetching and decoding happen off the GTK thread, a few
+//! covers at a time, and only for images that still want them by their turn
+//! (a fling through a long list rebinds rows faster than covers arrive). The
 //! covers in memory are let go when the window is put away and when the
 //! system runs low on memory.
 
@@ -22,7 +24,7 @@ use std::{
 };
 
 use gtk::{gdk, gio, glib, prelude::*};
-use tokio::sync::oneshot;
+use tokio::sync::{Semaphore, oneshot};
 
 use crate::runtime;
 
@@ -31,6 +33,8 @@ use crate::runtime;
 const MEMORY_BUDGET: usize = 12 * 1024 * 1024;
 /// Cover files kept on disk, in bytes.
 const DISK_BUDGET: u64 = 50 * 1024 * 1024;
+/// Covers read, fetched and decoded at once; the rest wait their turn.
+const FETCHES: usize = 4;
 
 /// A least-recently-used map that evicts by total cost, not by count.
 pub struct Lru<V> {
@@ -96,6 +100,7 @@ pub struct Images {
     memory: RefCell<Lru<gdk::Texture>>,
     waiting: RefCell<Waiters>,
     dir: PathBuf,
+    fetches: Semaphore,
     /// Kept so its warnings keep coming.
     _memory_monitor: gio::MemoryMonitor,
 }
@@ -105,6 +110,7 @@ thread_local! {
         memory: RefCell::new(Lru::new(MEMORY_BUDGET)),
         waiting: RefCell::new(HashMap::new()),
         dir: cache_dir(),
+        fetches: Semaphore::new(FETCHES),
         _memory_monitor: release_when_memory_runs_low(),
     });
 }
@@ -128,31 +134,38 @@ fn release_when_memory_runs_low() -> gio::MemoryMonitor {
 
 /// The cover at `url`, at most `pixels` on its longest side (0: as it
 /// comes), from memory, disk or the network. GTK thread only.
-async fn texture(url: String, pixels: u32) -> Option<gdk::Texture> {
+///
+/// A fetch waits for one of [`FETCHES`] turns; `wanted` is asked when its
+/// turn comes, and a cover no longer wanted by then is not fetched (`None`).
+async fn texture(url: String, pixels: u32, wanted: impl Fn() -> bool) -> Option<gdk::Texture> {
     let images = IMAGES.with(Rc::clone);
     let key = memory_key(&url, pixels);
-    if let Some(texture) = images.memory.borrow_mut().get(&key) {
-        return Some(texture);
-    }
-    // Someone already fetches it: wait for that. The borrow must end before
-    // the await, or the fetcher could not hand the result over.
-    let pending = {
-        let mut waiting = images.waiting.borrow_mut();
-        match waiting.get_mut(&key) {
-            Some(waiters) => {
-                let (tx, rx) = oneshot::channel();
-                waiters.push(tx);
-                Some(rx)
-            }
-            None => {
-                waiting.insert(key.clone(), Vec::new());
-                None
-            }
+    let mut turn = None;
+    let turn = loop {
+        if let Some(texture) = images.memory.borrow_mut().get(&key) {
+            return Some(texture);
+        }
+        // Someone already fetches it: wait for that. The borrow must end
+        // before the await, or the fetcher could not hand the result over.
+        let pending = images.waiting.borrow_mut().get_mut(&key).map(|waiters| {
+            let (tx, rx) = oneshot::channel();
+            waiters.push(tx);
+            rx
+        });
+        if let Some(rx) = pending {
+            return rx.await.ok().flatten();
+        }
+        if let Some(turn) = turn.take() {
+            break turn;
+        }
+        // While this waits, another fetch may bring the same cover (checked
+        // again above), or the row it was for may scroll away.
+        turn = Some(images.fetches.acquire().await.ok()?);
+        if !wanted() {
+            return None;
         }
     };
-    if let Some(rx) = pending {
-        return rx.await.ok().flatten();
-    }
+    images.waiting.borrow_mut().insert(key.clone(), Vec::new());
 
     let path = images.dir.join(file_name(&url));
     let fetch_url = url.clone();
@@ -180,6 +193,7 @@ async fn texture(url: String, pixels: u32) -> Option<gdk::Texture> {
         .await
         .ok()
         .flatten();
+    drop(turn);
     if let Some(t) = &texture {
         let cost = (t.width().max(1) * t.height().max(1)) as usize * bytes_per_pixel(t.format());
         images
@@ -194,8 +208,9 @@ async fn texture(url: String, pixels: u32) -> Option<gdk::Texture> {
 }
 
 /// Shows the cover at `url` in `image`, unless the image has been given
-/// another cover by the time it arrives (rows are recycled while scrolling).
-/// The image's widget name holds the URL it should show.
+/// another cover (rows are recycled while scrolling) or is gone by the time
+/// the cover's turn to be fetched comes, or by the time it arrives. The
+/// image's widget name holds the URL it should show.
 pub fn show(image: &gtk::Image, url: Option<&str>) {
     let Some(url) = url else {
         image.set_paintable(None::<&gdk::Paintable>);
@@ -218,10 +233,11 @@ pub fn show(image: &gtk::Image, url: Option<&str>) {
         return;
     }
     image.set_paintable(None::<&gdk::Paintable>);
-    let (image, url) = (image.clone(), url.to_string());
+    let (image, url) = (image.downgrade(), url.to_string());
     glib::spawn_future_local(async move {
-        let texture = texture(url.clone(), pixels).await;
-        if image.widget_name() == url.as_str() {
+        let wanting = || image.upgrade().filter(|i| i.widget_name() == url.as_str());
+        let texture = texture(url.clone(), pixels, || wanting().is_some()).await;
+        if let Some(image) = wanting() {
             image.set_paintable(texture.as_ref());
         }
     });
