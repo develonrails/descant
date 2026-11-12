@@ -49,6 +49,12 @@ pub fn page(nav: &Nav) -> adw::NavigationPage {
         .icon_name("edit-find-symbolic")
         .title("No Results")
         .build();
+    // A search that failed is not one that found nothing.
+    let failed = adw::StatusPage::builder()
+        .icon_name("network-error-symbolic")
+        .title("Search Failed")
+        .description("Spotify did not answer. Try again in a moment.")
+        .build();
     let spinner = adw::Spinner::builder()
         .width_request(32)
         .height_request(32)
@@ -57,6 +63,7 @@ pub fn page(nav: &Nav) -> adw::NavigationPage {
     stack.add_named(&idle, Some("idle"));
     stack.add_named(&spinner, Some("searching"));
     stack.add_named(&nothing, Some("nothing"));
+    stack.add_named(&failed, Some("failed"));
     stack.add_named(
         &gtk::ScrolledWindow::builder()
             .child(&results)
@@ -134,9 +141,12 @@ pub fn page(nav: &Nav) -> adw::NavigationPage {
                 }
                 Ok(Err(e)) => {
                     log::warn!("search: {e}");
-                    stack.set_visible_child_name("nothing");
+                    stack.set_visible_child_name("failed");
                 }
-                _ => stack.set_visible_child_name("nothing"),
+                // A panicked task; an aborted one never gets past the
+                // generation check above.
+                Err(_) => stack.set_visible_child_name("failed"),
+                Ok(Ok(_)) => stack.set_visible_child_name("nothing"),
             }
         });
     });
