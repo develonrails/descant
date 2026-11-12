@@ -4,6 +4,7 @@
 //!   Spotify on it; [`store`] keeps the credentials in the keyring
 //! - [`library`], [`home`], [`search`]: reading playlists, the collection,
 //!   albums, artists, Home's shelves and search results
+//! - [`radio`]: the song radio Spotify mixes from a track
 //! - [`edit`]: liking tracks and editing playlists
 //! - [`pathfinder`]: Spotify's internal GraphQL, its query hashes in one table
 
@@ -18,5 +19,6 @@ pub mod pairing;
 pub mod pathfinder;
 pub mod podcasts;
 pub mod profile;
+pub mod radio;
 pub mod search;
 pub mod store;
