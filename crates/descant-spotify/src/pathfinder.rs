@@ -84,12 +84,74 @@ pub async fn query(
             operation.name
         )));
     }
-    let mut value: Value = response
+    let value: Value = response
         .json()
         .await
         .map_err(|e| Error::unavailable(e.to_string()))?;
-    if let Some(errors) = value.get("errors") {
-        return Err(Error::unavailable(format!("{}: {errors}", operation.name)));
+    answer(operation.name, value)
+}
+
+/// A response's `data`, as long as some of it came.
+///
+/// GraphQL answers what it can: when one field fails (search's featured top
+/// result, say) the rest still comes, with the failure under `errors`. Only
+/// when nothing at all came is the query a failure.
+fn answer(name: &str, mut value: Value) -> Result<Value, Error> {
+    let data = value["data"].take();
+    let errors = value.get("errors").filter(|e| !e.is_null());
+    let some = data
+        .as_object()
+        .is_some_and(|fields| fields.values().any(|v| !v.is_null()));
+    match errors {
+        Some(errors) if !some => Err(Error::unavailable(format!("{name}: {errors}"))),
+        Some(errors) => {
+            log::warn!("{name}, in part: {errors}");
+            Ok(data)
+        }
+        None => Ok(data),
     }
-    Ok(value["data"].take())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_field_that_failed_leaves_the_rest_of_the_answer() {
+        let data = answer(
+            "searchDesktop",
+            json!({
+                "data": {"search": {"artists": {"items": [{"uri": "spotify:artist:r"}]},
+                                    "topResults": {"featured": null}}},
+                "errors": [{"message": "Exception while fetching data \
+                            (/search/topResults/featured) : Server error",
+                            "path": ["search", "topResults", "featured"]}]
+            }),
+        )
+        .expect("the rest of the answer");
+        assert_eq!(
+            data["search"]["artists"]["items"][0]["uri"],
+            "spotify:artist:r"
+        );
+    }
+
+    #[test]
+    fn an_answer_with_nothing_in_it_is_a_failure() {
+        let failed = json!([{"message": "Server error"}]);
+        assert!(answer("q", json!({"errors": failed})).is_err());
+        assert!(answer("q", json!({"data": null, "errors": failed})).is_err());
+        assert!(answer("q", json!({"data": {"search": null}, "errors": failed})).is_err());
+    }
+
+    #[test]
+    fn an_answer_without_errors_is_its_data() {
+        assert_eq!(
+            answer("q", json!({"data": {"a": 1}})).unwrap(),
+            json!({"a": 1})
+        );
+        assert_eq!(
+            answer("q", json!({"data": {"a": 1}, "errors": null})).unwrap(),
+            json!({"a": 1})
+        );
+    }
 }

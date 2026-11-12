@@ -21,6 +21,7 @@ getrandom = "0.3"
 descant-core = { path = "../descant-core" }
 oo7 = { version = "0.6", default-features = false, features = ["tokio", "native_crypto"] }
 serde_json = "1"
+log = "0.4"
 reqwest = { version = "0.12", default-features = false, features = ["native-tls-alpn", "http2", "json"] }
 tokio = { version = "1", features = ["rt", "macros"] }
 
