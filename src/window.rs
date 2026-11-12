@@ -1338,8 +1338,9 @@ impl Ui {
     }
 
     /// Starts the clock over from where the track stands, or stops it. It
-    /// ticks only while music plays and the window can be seen, once a
-    /// second, as the second turns over; otherwise nothing wakes for it.
+    /// ticks only while music plays and the window can be seen: when the
+    /// edge reaches its next pixel or the second turns over, whichever comes
+    /// first; otherwise nothing wakes for it.
     fn follow_position(self: &Rc<Self>) {
         if let Some(id) = self.ticker.borrow_mut().take() {
             id.remove();
@@ -1351,7 +1352,13 @@ impl Ui {
     }
 
     fn next_tick(self: &Rc<Self>) {
-        let wait = till_next_second(self.position_ms());
+        let position = self.position_ms();
+        let pixel = till_next_pixel(
+            position,
+            self.duration_ms.get(),
+            self.progress.width().try_into().unwrap_or(0),
+        );
+        let wait = till_next_second(position).min(pixel);
         let weak = Rc::downgrade(self);
         let id = glib::timeout_add_local_once(Duration::from_millis(wait.into()), move || {
             if let Some(ui) = weak.upgrade() {
@@ -1390,7 +1397,12 @@ impl Ui {
         let duration = self.duration_ms.get();
         let position = self.position_ms().min(duration);
         self.progress.set_value(f64::from(position));
-        self.time.set_label(&clock(position, duration));
+        // Most ticks only move the edge; the clock is laid out again only
+        // when its number changes.
+        let time = clock(position, duration);
+        if self.time.label() != time {
+            self.time.set_label(&time);
+        }
     }
 
     /// Shows a level that came from elsewhere, without sending it back.
@@ -1707,6 +1719,30 @@ fn till_next_second(position_ms: u32) -> u32 {
     1000 - position_ms % 1000
 }
 
+/// The edge never ticks faster than this: a short track across a wide
+/// window would otherwise wake the main thread at the frame rate.
+const FASTEST_TICK_MS: u32 = 100;
+
+/// Milliseconds from `position_ms` until the edge, `width` pixels across a
+/// track of `duration_ms`, reaches its next whole pixel; at least
+/// [`FASTEST_TICK_MS`]. A second when there is nothing to measure.
+fn till_next_pixel(position_ms: u32, duration_ms: u32, width: u32) -> u32 {
+    if duration_ms == 0 || width == 0 {
+        return 1000;
+    }
+    let (position, duration, width) = (
+        u64::from(position_ms),
+        u64::from(duration_ms),
+        u64::from(width),
+    );
+    // Pixel p starts at the first millisecond t with t * width >= p * duration.
+    let next = position * width / duration + 1;
+    let at = (next * duration).div_ceil(width);
+    u32::try_from(at - position)
+        .unwrap_or(u32::MAX)
+        .max(FASTEST_TICK_MS)
+}
+
 /// A selectable sidebar row with an icon or a cover; its widget name carries the id.
 /// `1:23 / 4:55`, and nothing at all when no track is loaded.
 fn clock(position_ms: u32, duration_ms: u32) -> String {
@@ -1886,5 +1922,37 @@ mod tests {
         let at = 61_250;
         assert_eq!(mmss(at + till_next_second(at) - 1), "1:01");
         assert_eq!(mmss(at + till_next_second(at)), "1:02");
+    }
+
+    #[test]
+    fn the_edge_ticks_when_it_reaches_the_next_pixel() {
+        // 3:30 across 800 pixels: a pixel every 262.5 ms.
+        let (duration, width) = (210_000, 800);
+        assert_eq!(till_next_pixel(0, duration, width), 263);
+        assert_eq!(till_next_pixel(263, duration, width), 262);
+        // Just short of a pixel, the floor holds.
+        assert_eq!(till_next_pixel(524, duration, width), FASTEST_TICK_MS);
+        // The pixel the edge is on changes exactly then.
+        let pixel = |t: u32| u64::from(t) * u64::from(width) / u64::from(duration);
+        let mut at = 0;
+        while at < 5_000 {
+            let wait = till_next_pixel(at, duration, width);
+            assert_eq!(pixel(at + wait), pixel(at) + 1, "at {at}");
+            at += wait;
+        }
+    }
+
+    #[test]
+    fn the_edge_ticks_no_faster_than_the_floor() {
+        // 30 seconds across 1200 pixels would be a pixel every 25 ms.
+        assert_eq!(till_next_pixel(0, 30_000, 1200), FASTEST_TICK_MS);
+        // A long podcast moves less than a pixel a second: the second wins.
+        assert!(till_next_pixel(0, 3_600_000, 800) > 1000);
+    }
+
+    #[test]
+    fn with_nothing_to_measure_the_edge_waits_a_second() {
+        assert_eq!(till_next_pixel(5, 0, 800), 1000);
+        assert_eq!(till_next_pixel(5, 210_000, 0), 1000);
     }
 }
