@@ -987,6 +987,11 @@ impl Ui {
         let Some(point) = settings::resume(&self.settings) else {
             return;
         };
+        // The place counts from there, paused, until the engine names one:
+        // the edge, the clock and MPRIS show it before Play is pressed.
+        if self.resume.borrow().is_none() {
+            *self.resume.borrow_mut() = Some((point.clone(), false, std::time::Instant::now()));
+        }
         let (ui, s) = (self.clone(), session.clone());
         glib::spawn_future_local(async move {
             let uris = vec![point.track];
