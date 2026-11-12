@@ -486,6 +486,7 @@ fn add_menu(row: &gtk::Box, context: &Rc<MenuContext>) {
         }
         menu.append_section(None, &first);
         let go = gio::Menu::new();
+        go.append_item(&item("Go to Song Radio", "track.radio", &target));
         go.append_item(&item("Go to Artist", "track.artist", &target));
         go.append_item(&item("Go to Album", "track.album", &target));
         menu.append_section(None, &go);
@@ -659,6 +660,34 @@ fn track_actions(
                         n.toast("The playlist changed meanwhile; open it again and retry")
                     }
                     _ => n.toast("Spotify did not take that change"),
+                }
+            });
+        }),
+    );
+
+    let n = nav.clone();
+    action(
+        "radio",
+        Box::new(move |target| {
+            let (uri, _) = split_target(&target);
+            let (n, uri) = (n.clone(), uri.to_string());
+            glib::spawn_future_local(async move {
+                let Some(s) = n.session() else { return };
+                let radio = runtime()
+                    .spawn(async move { descant_spotify::radio::for_track(&s, &uri).await })
+                    .await;
+                match radio {
+                    // The page names itself from the playlist ("… Radio").
+                    Ok(Ok(uri)) => n.open(Destination::Playlist {
+                        uri,
+                        name: String::new(),
+                        covers: vec![],
+                    }),
+                    Ok(Err(e)) => {
+                        log::warn!("song radio: {e}");
+                        n.toast("Spotify has no radio for this song")
+                    }
+                    Err(_) => n.toast("Spotify has no radio for this song"),
                 }
             });
         }),
