@@ -544,25 +544,32 @@ impl Ui {
             };
             ui.send(command);
         });
-        // Space is the obvious key for this, but it is also how you type a
-        // space and how a focused button is pressed. In the bubble phase the
-        // focused widget has already had it, so an entry keeps its space and
-        // only an otherwise-unhandled one reaches playback.
+        // Space plays and pauses wherever the focus is, as in Spotify. Left
+        // to the focused widget first, it vanished after any click into a
+        // list: a track row selects itself with it, a sidebar row opens its
+        // page again, and nothing seemed to happen. So the window takes it
+        // first (capture phase), except where it means something of its
+        // own: typing in a text field, or in a dialog or popover.
         let keys = gtk::EventControllerKey::new();
-        keys.set_propagation_phase(gtk::PropagationPhase::Bubble);
+        keys.set_propagation_phase(gtk::PropagationPhase::Capture);
         let ui = self.clone();
-        keys.connect_key_pressed(move |_, key, _, state| {
+        keys.connect_key_pressed(move |keys, key, _, state| {
             let bare = !state.intersects(
                 gtk::gdk::ModifierType::CONTROL_MASK
                     | gtk::gdk::ModifierType::ALT_MASK
                     | gtk::gdk::ModifierType::SUPER_MASK,
             );
-            if key == gtk::gdk::Key::space && bare {
-                let _ =
-                    gtk::prelude::WidgetExt::activate_action(&ui.window, "win.play-pause", None);
-                return glib::Propagation::Stop;
+            if key != gtk::gdk::Key::space || !bare {
+                return glib::Propagation::Proceed;
             }
-            glib::Propagation::Proceed
+            // A popover (a row's menu) is a surface of its own.
+            let in_popover = keys.current_event().and_then(|e| e.surface()) != ui.window.surface();
+            let focus = gtk::prelude::GtkWindowExt::focus(&ui.window);
+            if in_popover || focus.is_some_and(|f| keeps_space(&f)) {
+                return glib::Propagation::Proceed;
+            }
+            let _ = gtk::prelude::WidgetExt::activate_action(&ui.window, "win.play-pause", None);
+            glib::Propagation::Stop
         });
         self.window.add_controller(keys);
         action("next", self.clone(), |ui| ui.send(Command::Skip(1)));
@@ -1746,6 +1753,14 @@ fn till_next_pixel(position_ms: u32, duration_ms: u32, width: u32) -> u32 {
     u32::try_from(at - position)
         .unwrap_or(u32::MAX)
         .max(FASTEST_TICK_MS)
+}
+
+/// Whether space, pressed with `focus` focused, is that widget's to have:
+/// text being typed, or anything in a dialog (a switch in Preferences).
+fn keeps_space(focus: &gtk::Widget) -> bool {
+    focus.is::<gtk::Editable>()
+        || focus.is::<gtk::TextView>()
+        || focus.ancestor(adw::Dialog::static_type()).is_some()
 }
 
 /// A selectable sidebar row with an icon or a cover; its widget name carries the id.
