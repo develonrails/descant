@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+  <!-- A green disc with a black note; a darker base gives it GNOME's slight depth. -->
+  <circle cx="64" cy="68" r="56" fill="#13853b"/>
+  <circle cx="64" cy="64" r="56" fill="#1db954"/>
+  <g fill="#000000" transform="translate(-6 3)">
+    <ellipse cx="62" cy="85" rx="11" ry="8" transform="rotate(-20 62 85)"/>
+    <rect x="70" y="30" width="4.5" height="55" rx="2"/>
+    <path d="M74.5 30 c10 4 16 10 14 22 c-2-7-7-11-14-12 z"/>
+  </g>
+</svg>
