@@ -57,8 +57,9 @@ struct Queue {
     current: Option<String>,
 }
 
-/// The context Spirc reports for a plain list of tracks (top songs, a
-/// single track); Spotify cannot load it again by that name.
+/// The context Spirc reports for a plain list of tracks (top songs, an
+/// episode); Spotify cannot load it again by that name, nor go on from it
+/// with autoplay: its autoplay endpoint answers 400.
 const TRACK_LIST: &str = "spotify:web-api";
 
 /// Whether `context` can be loaded again by its URI.
@@ -82,6 +83,19 @@ impl Again {
     }
 }
 
+/// What to load to play `uri` on its own. A track is its own context:
+/// Spotify resolves it to that one track, and when it ends autoplay goes on
+/// with songs like it. As a list of one its context was `spotify:web-api`,
+/// which autoplay refuses, so the music stopped after it. An episode stays
+/// a list of one; autoplay does not follow podcasts.
+fn alone(uri: &str) -> Again {
+    if uri.starts_with("spotify:episode:") {
+        Again::Tracks(vec![uri.to_string()])
+    } else {
+        Again::Context(uri.to_string())
+    }
+}
+
 impl Queue {
     /// How to play `track` again: in its context, in its track list, or on
     /// its own.
@@ -89,7 +103,7 @@ impl Queue {
         match &self.context {
             Some(context) if reloadable(context) => Again::Context(context.clone()),
             _ if self.tracks.iter().any(|t| t == track) => Again::Tracks(self.tracks.clone()),
-            _ => Again::Tracks(vec![track.to_string()]),
+            _ => alone(track),
         }
     }
 
@@ -309,15 +323,9 @@ impl LibrespotEngine {
                     playing_track: start_track.clone().map(PlayingTrack::Uri),
                     ..Default::default()
                 };
-                // A single track or episode is a list of one; anything else
-                // is a context Spotify knows by its URI.
-                let request = if context.starts_with("spotify:track:")
-                    || context.starts_with("spotify:episode:")
-                {
-                    LoadRequest::from_tracks(vec![context.clone()], options)
-                } else {
-                    LoadRequest::from_context_uri(context.clone(), options)
-                };
+                // An album, playlist or artist is a context Spotify knows by
+                // its URI, and so is a single track.
+                let request = alone(context).request(options);
                 self.spirc.activate()?;
                 self.spirc.load(request)
             }
@@ -635,7 +643,18 @@ mod tests {
         let q = q.lock().unwrap();
         assert_eq!(q.again(B), Again::Tracks(vec![A.into(), B.into()]));
         // a track from somewhere else plays on its own
-        assert_eq!(q.again(C), Again::Tracks(vec![C.into()]));
+        assert_eq!(q.again(C), Again::Context(C.into()));
+    }
+
+    #[test]
+    fn a_track_on_its_own_is_its_own_context_so_autoplay_goes_on() {
+        assert_eq!(alone(A), Again::Context(A.into()));
+        assert_eq!(
+            alone("spotify:album:x"),
+            Again::Context("spotify:album:x".into())
+        );
+        let episode = "spotify:episode:6666666666666666666666";
+        assert_eq!(alone(episode), Again::Tracks(vec![episode.into()]));
     }
 
     #[test]
