@@ -442,6 +442,7 @@ dependencies = [
  "descant-core",
  "descant-playback",
  "descant-spotify",
+ "gio",
  "gtk4",
  "libadwaita",
  "librespot-core",
