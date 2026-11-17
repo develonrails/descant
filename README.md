@@ -12,7 +12,7 @@ and is built to be light on your computer and to keep playing when other
 clients go quiet.
 
 <p align="center">
-  <img src="docs/screenshots/home.png" alt="Descant's Home in the dark style: quick tiles, Made for you, and the now-playing bar">
+  <img src="docs/screenshots/home.png" alt="Descant's Home in the light style: the sidebar with your playlists, quick tiles, Made for you, Recently played, and the now-playing bar">
 </p>
 
 ## What Descant stands for
