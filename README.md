@@ -63,10 +63,22 @@ lives in the system keyring, and audio is streamed, never stored.
 - **Media controls:** play, skip, seek and set the volume from the media keys,
   GNOME's media controls, GSConnect or `playerctl` (MPRIS).
 - **Ten-band equalizer** with presets, for playback on this computer.
-- **Visualizer:** switch it on beside the heart and the music turns to light
-  above the bar, or full screen. Four presets (Tunnel, Nebula, Spectrum,
-  Starfield) in your accent colour, the song showing as it changes, in step
-  with what you hear.
+- **Visualizer:** the button beside the heart turns the music to light above
+  the bar, in step with what you hear; the corner button, <kbd>F11</kbd> or a
+  double click take it full screen, <kbd>Esc</kbd> brings it back. When a
+  song starts, its cover and title show in the corner for a moment.
+  In Preferences, under Visualizer:
+  - four presets: **Tunnel** (the waveform as a ring, its echoes zooming
+    out), **Nebula** (clouds of colour, the waveform rising like smoke),
+    **Spectrum** (glowing bars over a mirroring horizon) and **Starfield**
+    (stars flying faster as the music gets louder);
+  - colours from your **accent colour** (on by default; it follows when you
+    pick another in GNOME's Appearance settings), or the rainbow;
+  - optionally **another preset with every song**.
+
+  It costs nothing while it is off or out of sight, stops drawing when the
+  music pauses, and draws half as often (30 instead of 60 frames a second)
+  when GNOME's **power saver** mode is on.
 - **Keep playing in the background** when the window is closed, if you want.
 - **Keyboard shortcuts:** <kbd>Ctrl</kbd>+<kbd>?</kbd> lists them.
 
