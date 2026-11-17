@@ -18,6 +18,9 @@ descant-spotify = { path = "crates/descant-spotify" }
 librespot-core = { workspace = true }
 gtk = { package = "gtk4", version = "0.11", features = ["v4_20"] }
 adw = { package = "libadwaita", version = "0.9", features = ["v1_8"] }
+# gtk's own gio, for GPowerProfileMonitor (GLib 2.70): the visualizer
+# draws half as often in power saver mode.
+gio = { version = "0.22", features = ["v2_70"] }
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "fs"] }
 qrcode = { version = "0.14", default-features = false }
 log = "0.4"

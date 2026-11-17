@@ -11,6 +11,8 @@
 //! When a new song starts, when it goes full screen and when it is switched
 //! on, the song's cover, title and artists show in the corner for a while.
 //!
+//! In GNOME's power saver mode it draws half as often.
+//!
 //! It draws with GTK's own render nodes (gradients and rectangles the GPU
 //! draws as they are), into a `GtkPicture`, one frame per display frame.
 //! It only runs while it can be seen: hidden, it neither listens to the
@@ -47,8 +49,11 @@ const ZOOM_RATE: f32 = 1.15;
 const ECHO_POINTS: usize = 96;
 /// Silence this long, with nothing playing, and it stops drawing.
 const SETTLE_S: f32 = 2.5;
-/// No more than this many frames a second, however fast the display.
+/// No more than about 60 frames a second, however fast the display; about
+/// 30 in power saver mode. A little under the frame time, so a 60 Hz
+/// display draws every frame, or every other one.
 const MIN_FRAME_US: i64 = 15_000;
+const MIN_FRAME_SAVING_US: i64 = 31_000;
 /// In full screen, the button and the pointer go after this long still.
 const HIDE_AFTER: Duration = Duration::from_millis(2500);
 /// How long the playing song shows in the corner.
@@ -116,6 +121,8 @@ pub struct Visualizer {
     scene: RefCell<Scene>,
     tick: RefCell<Option<gtk::TickCallbackId>>,
     playing: Cell<bool>,
+    /// Whether GNOME's power saver mode is on: then half the frames.
+    power: gio::PowerProfileMonitor,
     /// Full screen: the button and the pointer hide while nothing moves.
     immersed: Cell<bool>,
     hide_pending: RefCell<Option<glib::SourceId>>,
@@ -261,6 +268,7 @@ impl Visualizer {
             scene: RefCell::new(Scene::new()),
             tick: RefCell::new(None),
             playing: Cell::new(false),
+            power: gio::PowerProfileMonitor::get_default(),
             immersed: Cell::new(false),
             hide_pending: RefCell::new(None),
             caption,
@@ -475,8 +483,9 @@ impl Visualizer {
     /// One frame at `now_us`; false once it has settled.
     fn frame(&self, picture: &gtk::Picture, now_us: i64) -> bool {
         let mut scene = self.scene.borrow_mut();
+        let gap = frame_gap_us(self.power.is_power_saver_enabled());
         let dt = match scene.last_us {
-            Some(last) if now_us - last < MIN_FRAME_US => return true,
+            Some(last) if now_us - last < gap => return true,
             Some(last) => (now_us - last) as f32 / 1e6,
             None => 1.0 / 60.0,
         };
@@ -942,6 +951,15 @@ impl Random {
     }
 }
 
+/// The least time between two frames drawn, in microseconds.
+fn frame_gap_us(power_saver: bool) -> i64 {
+    if power_saver {
+        MIN_FRAME_SAVING_US
+    } else {
+        MIN_FRAME_US
+    }
+}
+
 /// The waveform around a whole ring: once down one side, mirrored up the
 /// other, so the ends meet.
 fn mirrored_wave(f: &Frame) -> [f32; 2 * WAVE] {
@@ -1062,6 +1080,30 @@ mod tests {
         // a slate accent greys everything a little
         let slate = Palette::around(gdk::RGBA::new(0.435, 0.514, 0.588, 1.0));
         assert!(slate.saturation < 0.5);
+    }
+
+    /// How many of a second's display frames get drawn.
+    fn drawn_per_second(refresh_hz: i64, power_saver: bool) -> usize {
+        let frame_us = 1_000_000 / refresh_hz;
+        let mut last = None;
+        (0..refresh_hz)
+            .filter(|i| {
+                let now = i * frame_us;
+                let draw = last.is_none_or(|l| now - l >= frame_gap_us(power_saver));
+                if draw {
+                    last = Some(now);
+                }
+                draw
+            })
+            .count()
+    }
+
+    #[test]
+    fn about_60_frames_a_second_and_30_saving_power() {
+        assert_eq!(drawn_per_second(60, false), 60);
+        assert_eq!(drawn_per_second(60, true), 30);
+        assert_eq!(drawn_per_second(120, false), 60);
+        assert_eq!(drawn_per_second(120, true), 30);
     }
 
     #[test]
