@@ -70,6 +70,10 @@ lives in the system keyring, and audio is streamed, never stored.
 - **Keep playing in the background** when the window is closed, if you want.
 - **Keyboard shortcuts:** <kbd>Ctrl</kbd>+<kbd>?</kbd> lists them.
 
+<p align="center">
+  <img src="docs/screenshots/visualizer.png" alt="The Tunnel visualizer in GNOME's blue accent colour: a glowing waveform ring with echoes zooming out, above the now-playing bar">
+</p>
+
 You need a **Spotify Premium** account; librespot cannot play on a free one.
 
 ## Install
