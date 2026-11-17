@@ -83,7 +83,7 @@ lives in the system keyring, and audio is streamed, never stored.
 - **Keyboard shortcuts:** <kbd>Ctrl</kbd>+<kbd>?</kbd> lists them.
 
 <p align="center">
-  <img src="docs/screenshots/visualizer.png" alt="The Tunnel visualizer in GNOME's blue accent colour: a glowing waveform ring with echoes zooming out, above the now-playing bar">
+  <img src="docs/screenshots/visualizer.png" alt="The Tunnel visualizer in GNOME's blue accent colour: a glowing waveform ring with echoes zooming out, above the now-playing bar playing Flight by Hans Zimmer">
 </p>
 
 You need a **Spotify Premium** account; librespot cannot play on a free one.
