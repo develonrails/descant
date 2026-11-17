@@ -5,9 +5,12 @@
 //! engine applies the supervisor's effects and reports everything the player
 //! does as [`Report`]s.
 
-use std::sync::{
-    Arc, Mutex,
-    atomic::{AtomicBool, Ordering},
+use std::{
+    collections::HashSet,
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 
 use descant_core::{
@@ -55,7 +58,16 @@ struct Queue {
     /// The context's tracks in play order: previous, current, next.
     tracks: Vec<String>,
     current: Option<String>,
+    /// Tracks that play within the context but are not part of it: songs
+    /// autoplay added after its end, and songs put in the queue. Loading the
+    /// context again cannot find them, and Spirc then starts at its first
+    /// track. Kept for as long as the context stays the same, since the
+    /// queue Spirc reports holds only the next eighty.
+    strays: HashSet<String>,
 }
+
+/// What Spirc calls the source of a track that is not part of the context.
+const STRAY_PROVIDERS: [&str; 2] = ["autoplay", "queue"];
 
 /// The context Spirc reports for a plain list of tracks (top songs, an
 /// episode); Spotify cannot load it again by that name, nor go on from it
@@ -97,10 +109,20 @@ fn alone(uri: &str) -> Again {
 }
 
 impl Queue {
+    /// The context of the track that plays now, if it is part of it: none
+    /// for a song autoplay or the queue brought in.
+    fn current_context(&self) -> Option<&String> {
+        match &self.current {
+            Some(track) if self.strays.contains(track) => None,
+            _ => self.context.as_ref(),
+        }
+    }
+
     /// How to play `track` again: in its context, in its track list, or on
     /// its own.
     fn again(&self, track: &str) -> Again {
         match &self.context {
+            Some(_) if self.strays.contains(track) => alone(track),
             Some(context) if reloadable(context) => Again::Context(context.clone()),
             _ if self.tracks.iter().any(|t| t == track) => Again::Tracks(self.tracks.clone()),
             _ => alone(track),
@@ -241,9 +263,11 @@ impl LibrespotEngine {
         self.session.clone()
     }
 
-    /// The context playing now, as Spirc reported it.
+    /// The context playing now, as Spirc reported it, when the current
+    /// track is part of it. A song autoplay or the queue brought in is not:
+    /// it plays again on its own, not as the context's first track.
     pub fn context(&self) -> Option<String> {
-        self.queue.lock().unwrap().context.clone()
+        self.queue.lock().unwrap().current_context().cloned()
     }
 
     /// Where the next reload plays: the context of an earlier engine (after a
@@ -310,9 +334,11 @@ impl LibrespotEngine {
                 self.spirc.repeat_track(*mode == Repeat::Track)
             }
             Command::AddToQueue(uri) => {
-                let uri = librespot_core::SpotifyUri::from_uri(uri)
+                let parsed = librespot_core::SpotifyUri::from_uri(uri)
                     .map_err(|_| Error::invalid_argument("not a Spotify URI"))?;
-                self.spirc.add_to_queue(uri)
+                // Spirc reports no new queue for a song queued from here.
+                self.queue.lock().unwrap().strays.insert(uri.clone());
+                self.spirc.add_to_queue(parsed)
             }
             Command::Load {
                 context,
@@ -443,13 +469,22 @@ fn report_for(event: PlayerEvent, queue: &Mutex<Queue>) -> Vec<Report> {
             prev_tracks,
         } => {
             let mut queue = queue.lock().unwrap();
+            if queue.context.as_ref() != Some(&context_uri) {
+                queue.strays.clear();
+            }
             queue.context = Some(context_uri);
-            queue.tracks = prev_tracks
+            let tracks: Vec<_> = prev_tracks
                 .into_iter()
                 .chain(current_track)
                 .chain(next_tracks)
-                .map(|t| t.uri)
                 .collect();
+            queue.strays.extend(
+                tracks
+                    .iter()
+                    .filter(|t| STRAY_PROVIDERS.contains(&t.provider.as_str()))
+                    .map(|t| t.uri.clone()),
+            );
+            queue.tracks = tracks.into_iter().map(|t| t.uri).collect();
             return vec![Report::Queue(queue.upcoming())];
         }
         _ => return vec![],
@@ -515,9 +550,13 @@ mod tests {
     use librespot_playback::player::QueueTrack;
 
     fn qt(s: &str) -> QueueTrack {
+        from(s, "context")
+    }
+
+    fn from(s: &str, provider: &str) -> QueueTrack {
         QueueTrack {
             uri: s.to_string(),
-            provider: "context".into(),
+            provider: provider.into(),
         }
     }
 
@@ -626,6 +665,80 @@ mod tests {
             q.lock().unwrap().again(C),
             Again::Context("spotify:playlist:x".into())
         );
+    }
+
+    /// A song played on its own, with autoplay going on from it: the context
+    /// stays that first song, and loading it again found only that one.
+    fn queue_in_autoplay() -> Mutex<Queue> {
+        let q = Mutex::new(Queue::default());
+        report_for(
+            PlayerEvent::SetQueue {
+                context_uri: A.into(),
+                current_track: Some(qt(A)),
+                next_tracks: vec![from(B, "autoplay"), from(C, "autoplay")],
+                prev_tracks: vec![],
+            },
+            &q,
+        );
+        q
+    }
+
+    #[test]
+    fn a_song_autoplay_brought_in_plays_again_on_its_own_not_as_the_first() {
+        let q = queue_in_autoplay();
+        assert_eq!(q.lock().unwrap().again(A), Again::Context(A.into()));
+        assert_eq!(q.lock().unwrap().again(C), Again::Context(C.into()));
+        report_for(loading(C), &q);
+        assert_eq!(q.lock().unwrap().current_context(), None);
+        report_for(loading(A), &q);
+        assert_eq!(q.lock().unwrap().current_context(), Some(&A.to_string()));
+    }
+
+    #[test]
+    fn autoplay_songs_stay_strays_after_they_left_the_reported_queue() {
+        let q = queue_in_autoplay();
+        // Further on, Spirc reports only what is around the current track.
+        report_for(
+            PlayerEvent::SetQueue {
+                context_uri: A.into(),
+                current_track: Some(from(D, "autoplay")),
+                next_tracks: vec![from(E, "autoplay")],
+                prev_tracks: vec![],
+            },
+            &q,
+        );
+        assert_eq!(q.lock().unwrap().again(B), Again::Context(B.into()));
+        // until another context loads
+        report_for(
+            PlayerEvent::SetQueue {
+                context_uri: "spotify:album:y".into(),
+                current_track: Some(qt(B)),
+                next_tracks: vec![],
+                prev_tracks: vec![],
+            },
+            &q,
+        );
+        assert_eq!(
+            q.lock().unwrap().again(B),
+            Again::Context("spotify:album:y".into())
+        );
+    }
+
+    #[test]
+    fn a_queued_song_plays_again_on_its_own() {
+        let q = queue_after_load();
+        report_for(
+            PlayerEvent::SetQueue {
+                context_uri: "spotify:playlist:x".into(),
+                current_track: Some(qt(A)),
+                next_tracks: vec![from(E, "queue"), qt(B)],
+                prev_tracks: vec![],
+            },
+            &q,
+        );
+        let q = q.lock().unwrap();
+        assert_eq!(q.again(E), Again::Context(E.into()));
+        assert_eq!(q.again(B), Again::Context("spotify:playlist:x".into()));
     }
 
     #[test]
