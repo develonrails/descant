@@ -40,6 +40,10 @@
       <caption>Home, with your mixes and the now-playing bar</caption>
       <image>https://raw.githubusercontent.com/develonrails/descant/main/docs/screenshots/home.png</image>
     </screenshot>
+    <screenshot>
+      <caption>The visualizer, in your accent colour</caption>
+      <image>https://raw.githubusercontent.com/develonrails/descant/main/docs/screenshots/visualizer.png</image>
+    </screenshot>
   </screenshots>
 
   <launchable type="desktop-id">io.github.develonrails.Descant.desktop</launchable>
