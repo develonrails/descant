@@ -7,6 +7,7 @@ pub mod key;
 pub mod link;
 pub mod podcast;
 pub mod quality;
+pub mod spectrum;
 pub mod supervisor;
 pub mod time;
 pub mod track;

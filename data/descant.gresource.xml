@@ -7,5 +7,6 @@
     <file>heart-outline-symbolic.svg</file>
     <file>skip-back-circle-symbolic.svg</file>
     <file>skip-forward-circle-symbolic.svg</file>
+    <file>visualizer-symbolic.svg</file>
   </gresource>
 </gresources>

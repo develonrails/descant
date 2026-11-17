@@ -4,7 +4,9 @@
 //! Search, the library and the user's playlists; on the right a navigation
 //! stack (a sidebar pick replaces it, an album or artist opens on top of it);
 //! the now-playing bar across the bottom. Narrow windows collapse the sidebar.
-//! Pages are built when opened and dropped when left.
+//! Pages are built when opened and dropped when left. The visualizer, when
+//! switched on, takes the place of the sidebar and the pages; in full screen
+//! it takes the bar's too.
 
 use std::{cell::RefCell, rc::Rc, time::Duration};
 
@@ -17,6 +19,7 @@ use descant_core::{
 use descant_playback::{
     controller::{self, ControllerConfig, ControllerHandle, ResumePoint, Session, Update},
     equalizer::EqualizerSetting,
+    scope::Scope,
 };
 use descant_spotify::{library, pairing, store};
 use gtk::{gio, glib};
@@ -34,8 +37,10 @@ use crate::{
     runtime, search,
     settings::{self, KEEP_PLAYING, VOLUME},
     tracks::{Source, TrackPage},
+    visualizer::Visualizer,
     widgets::{
-        LIKE_ICON, LIKED_ICON, SKIP_BACK_ICON, SKIP_FORWARD_ICON, cover_image, pick, with_header,
+        LIKE_ICON, LIKED_ICON, SKIP_BACK_ICON, SKIP_FORWARD_ICON, VISUALIZER_ICON, cover_image,
+        pick, with_header,
     },
 };
 
@@ -75,6 +80,8 @@ struct Ui {
     open_link: gtk::Button,
     pairing_status: gtk::Label,
     // layout
+    /// Above the bar: the sidebar and the pages, or the visualizer.
+    top: gtk::Stack,
     split: adw::NavigationSplitView,
     sidebar: gtk::ListBox,
     content: adw::NavigationView,
@@ -88,6 +95,11 @@ struct Ui {
     /// Shown inside the play button while a track loads, so nothing moves.
     loading: adw::Spinner,
     play_pause: gtk::Button,
+    /// The bar and its top edge, hidden while the visualizer has the screen.
+    bar: gtk::CenterBox,
+    visualizer: Rc<Visualizer>,
+    /// Hears what plays, for the visualizer.
+    scope: std::sync::Arc<Scope>,
     // state
     controller: RefCell<Option<ControllerHandle>>,
     /// The session, liked tracks and the user's playlists, shared with every page.
@@ -338,6 +350,13 @@ impl Ui {
         volume.set_tooltip_text(Some("Volume"));
         volume.update_property(&[gtk::accessible::Property::Label("Volume")]);
         let like = round_button(LIKE_ICON, "Save to Liked Songs", "win.like");
+        let show_visualizer = gtk::ToggleButton::builder()
+            .icon_name(VISUALIZER_ICON)
+            .tooltip_text("Visualizer")
+            .action_name("win.visualizer")
+            .valign(gtk::Align::Center)
+            .css_classes(["circular", "flat"])
+            .build();
         // The bar's top edge doubles as the position: a hair-thin scale that
         // thickens under the pointer, so it can also be dragged to seek.
         let progress = gtk::Scale::with_range(gtk::Orientation::Horizontal, 0.0, 1.0, 1000.0);
@@ -364,6 +383,7 @@ impl Ui {
         transport.append(&forward);
         transport.append(&repeat);
         let aside = gtk::Box::builder().spacing(12).build();
+        aside.append(&show_visualizer);
         aside.append(&like);
         aside.append(&up_next);
         aside.append(&mute);
@@ -381,7 +401,15 @@ impl Ui {
         let player_page = gtk::Box::builder()
             .orientation(gtk::Orientation::Vertical)
             .build();
-        player_page.append(&split);
+        let scope = Scope::new();
+        let visualizer = Visualizer::new(scope.clone(), &settings);
+        let top = gtk::Stack::builder()
+            .transition_type(gtk::StackTransitionType::Crossfade)
+            .vexpand(true)
+            .build();
+        top.add_named(&split, Some("library"));
+        top.add_named(&visualizer.root, Some("visualizer"));
+        player_page.append(&top);
         player_page.append(&progress);
         player_page.append(&bar);
 
@@ -424,6 +452,7 @@ impl Ui {
             code,
             open_link,
             pairing_status,
+            top,
             split,
             sidebar,
             content,
@@ -437,6 +466,9 @@ impl Ui {
                 .height_request(16)
                 .build(),
             play_pause,
+            bar,
+            visualizer,
+            scope,
             controller: RefCell::new(None),
             library: Rc::default(),
             like,
@@ -580,6 +612,36 @@ impl Ui {
         action("back", self.clone(), |ui| ui.jump(-15_000));
         action("forward", self.clone(), |ui| ui.jump(30_000));
         action("mute", self.clone(), |ui| ui.toggle_mute());
+        let shown = gio::SimpleAction::new_stateful("visualizer", None, &false.to_variant());
+        let ui = self.clone();
+        shown.connect_change_state(move |_, state| {
+            if let Some(on) = state.and_then(|s| s.get::<bool>()) {
+                ui.show_visualizer(on);
+            }
+        });
+        self.window.add_action(&shown);
+        action("visualizer-fullscreen", self.clone(), |ui| {
+            if ui.window.is_fullscreen() {
+                ui.window.unfullscreen();
+            } else if ui.top.visible_child_name().as_deref() == Some("visualizer") {
+                ui.window.fullscreen();
+            }
+        });
+        // However full screen is left (Escape, the button, the compositor),
+        // the bar comes back.
+        let ui = self.clone();
+        self.window
+            .connect_fullscreened_notify(move |_| ui.fit_visualizer());
+        let escape = gtk::EventControllerKey::new();
+        let ui = self.clone();
+        escape.connect_key_pressed(move |_, key, _, _| {
+            if key == gtk::gdk::Key::Escape && ui.window.is_fullscreen() {
+                ui.window.unfullscreen();
+                return glib::Propagation::Stop;
+            }
+            glib::Propagation::Proceed
+        });
+        self.window.add_controller(escape);
         let ui = self.clone();
         self.volume
             .connect_value_changed(move |scale| ui.volume_moved(scale.value()));
@@ -743,12 +805,14 @@ impl Ui {
             }
             Destination::Show { uri, name } => podcasts::show_page(&nav, &uri, &name),
         };
+        self.hide_visualizer();
         self.content.push(&page);
     }
 
     /// Up Next, on top of whatever is open.
     fn open_queue(self: &Rc<Self>) {
         let Some(nav) = self.nav() else { return };
+        self.hide_visualizer();
         let uris = self.queue.borrow().clone();
         let page = self.track_page(&nav, Source::Queue { uris }, "Up Next", &[]);
         self.split.set_show_content(true);
@@ -871,6 +935,7 @@ impl Ui {
                 initial_volume: volume::from_percent(saved),
                 resume: settings::resume(&self.settings),
                 equalizer: self.equalizer.clone(),
+                scope: self.scope.clone(),
                 quality: settings::quality(&self.settings),
                 session: SessionConfig {
                     tmp_dir: images::track_dir(),
@@ -1241,6 +1306,7 @@ impl Ui {
             }
         }
         self.set_inhibit(matches!(status, Status::Playing { .. }));
+        self.visualizer.set_playing(playing);
         if let Some(mpris) = &*self.mpris.borrow() {
             mpris.status(&status);
         }
@@ -1575,6 +1641,7 @@ impl Ui {
             .set_range(0.0, f64::from(info.duration_ms.max(1)));
         self.show_position();
         // Mark the playing track in every open list, and follow it with the heart.
+        self.visualizer.track(&info);
         *self.current.borrow_mut() = info.uri;
         self.show_like();
         self.mark_playing();
@@ -1653,6 +1720,39 @@ impl Ui {
         crate::preferences::present(&self.window, &self.settings, &self.equalizer, nav.as_ref());
     }
 
+    /// The visualizer in place of the sidebar and the pages, or not.
+    fn show_visualizer(&self, on: bool) {
+        if let Some(action) = self
+            .window
+            .lookup_action("visualizer")
+            .and_downcast::<gio::SimpleAction>()
+        {
+            action.set_state(&on.to_variant());
+        }
+        self.top
+            .set_visible_child_name(if on { "visualizer" } else { "library" });
+        if !on && self.window.is_fullscreen() {
+            self.window.unfullscreen();
+        }
+        self.fit_visualizer();
+    }
+
+    /// Going somewhere (Up Next, an artist) puts the pages back.
+    fn hide_visualizer(&self) {
+        if self.top.visible_child_name().as_deref() == Some("visualizer") {
+            self.show_visualizer(false);
+        }
+    }
+
+    /// In full screen the visualizer has it all; otherwise the bar shows.
+    fn fit_visualizer(&self) {
+        let immersed = self.window.is_fullscreen()
+            && self.top.visible_child_name().as_deref() == Some("visualizer");
+        self.bar.set_visible(!immersed);
+        self.progress.set_visible(!immersed);
+        self.visualizer.set_immersed(immersed);
+    }
+
     fn shortcuts(self: &Rc<Self>) {
         let dialog = adw::ShortcutsDialog::new();
         let section = |title: &str, items: &[(&str, &str)]| {
@@ -1670,6 +1770,10 @@ impl Ui {
                 ("Next Track", "<Control>Right"),
                 ("Previous Track", "<Control>Left"),
             ],
+        ));
+        dialog.add(section(
+            "Visualizer",
+            &[("Full Screen", "F11"), ("Leave Full Screen", "Escape")],
         ));
         dialog.add(section(
             "General",

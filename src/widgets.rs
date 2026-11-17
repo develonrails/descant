@@ -14,6 +14,8 @@ pub const LIKE_ICON: &str = "heart-outline-symbolic";
 /// An episode's jumps back and ahead: circling arrows, seconds drawn inside.
 pub const SKIP_BACK_ICON: &str = "skip-back-circle-symbolic";
 pub const SKIP_FORWARD_ICON: &str = "skip-forward-circle-symbolic";
+/// The visualizer's switch: Lucide's audio waveform.
+pub const VISUALIZER_ICON: &str = "visualizer-symbolic";
 
 /// Thumbnail size in song rows, in logical pixels.
 pub const THUMB: i32 = 40;

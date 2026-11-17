@@ -1,5 +1,6 @@
 //! Descant's own settings, in GSettings: whether closing the window stops the
-//! music, the volume, the equalizer, and where playback stopped.
+//! music, the volume, the equalizer, the visualizer, and where playback
+//! stopped.
 //!
 //! The Flatpak installs the schema with the app; a run from a checkout uses
 //! the copy `build.rs` compiled. Inside the sandbox GLib keeps the values in
@@ -12,6 +13,8 @@ use descant_core::{
 use descant_playback::controller::ResumePoint;
 use gtk::{gio, prelude::*};
 
+use crate::visualizer::Preset;
+
 /// Closing the window hides it and the music plays on. Off by default: an
 /// app that keeps running after you closed it, without having said so, is
 /// one people find in their process list and distrust.
@@ -23,8 +26,18 @@ const RESUME: &str = "resume";
 pub const EQUALIZER: &str = "equalizer";
 /// Which stream to ask Spotify for.
 pub const QUALITY: &str = "quality";
+/// What the visualizer draws, and whether it picks another with every song.
+pub const VISUALIZER_PRESET: &str = "visualizer-preset";
+pub const VISUALIZER_SHUFFLE: &str = "visualizer-shuffle";
+/// Whether the visualizer keeps to the accent colour.
+pub const VISUALIZER_ACCENT: &str = "visualizer-accent";
 const EQUALIZER_GAINS: &str = "equalizer-gains";
 const EQUALIZER_PREAMP: &str = "equalizer-preamp";
+
+/// The chosen visualizer preset; anything unrecognised is the first.
+pub fn visualizer_preset(settings: &gio::Settings) -> Preset {
+    Preset::from_id(&settings.string(VISUALIZER_PRESET)).unwrap_or_default()
+}
 
 /// The stream to ask for; anything unrecognised plays at the usual rate.
 pub fn quality(settings: &gio::Settings) -> Quality {
@@ -140,6 +153,24 @@ mod tests {
         let settings = in_memory();
         settings.set_boolean(KEEP_PLAYING, true).unwrap();
         assert!(settings.boolean(KEEP_PLAYING));
+    }
+
+    #[test]
+    fn the_visualizer_starts_as_a_tunnel_and_keeps_its_preset() {
+        let settings = in_memory();
+        assert_eq!(visualizer_preset(&settings), Preset::Tunnel);
+        assert!(!settings.boolean(VISUALIZER_SHUFFLE));
+        assert!(settings.boolean(VISUALIZER_ACCENT));
+        settings.set_string(VISUALIZER_PRESET, "starfield").unwrap();
+        assert_eq!(visualizer_preset(&settings), Preset::Starfield);
+    }
+
+    #[test]
+    fn every_preset_is_a_choice_the_schema_knows() {
+        let key = built().unwrap().key(VISUALIZER_PRESET);
+        for preset in Preset::ALL {
+            assert!(key.range_check(&preset.id().to_variant()), "{preset:?}");
+        }
     }
 
     #[test]

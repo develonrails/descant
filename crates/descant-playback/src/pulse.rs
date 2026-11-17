@@ -34,9 +34,13 @@
 //! the queue, too: ~425 ms measured, against ~255 ms. A shorter target would
 //! make it quicker but costs wakeups: 300 ms measured twice the rate of 400.
 
-use std::env;
+use std::{
+    env,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
-use libpulse_binding::{def::BufferAttr, sample, stream::Direction};
+use libpulse_binding::{def::BufferAttr, error::PAErr, sample, stream::Direction};
 use libpulse_simple_binding::Simple;
 use librespot_playback::{
     NUM_CHANNELS, SAMPLE_RATE,
@@ -44,6 +48,8 @@ use librespot_playback::{
     convert::Converter,
     decoder::AudioPacket,
 };
+
+use crate::scope::Scope;
 
 /// How much audio is queued between a write and the speaker, in milliseconds.
 pub const TARGET_MS: u32 = 400;
@@ -125,6 +131,22 @@ pub struct PulseSink {
     stream_name: String,
     stream: Option<Simple>,
     batch: Batch,
+    scope: Option<Arc<Scope>>,
+}
+
+/// Writes `bytes` to the server, and hands them to `scope` when someone
+/// listens there, with how long until the last of them is heard.
+fn write_to(stream: &Simple, scope: Option<&Scope>, bytes: &[u8]) -> Result<(), PAErr> {
+    stream.write(bytes)?;
+    if let Some(scope) = scope.filter(|s| s.listening()) {
+        let latency = stream
+            .get_latency()
+            .map_or(Duration::from_millis(TARGET_MS.into()), |us| {
+                Duration::from_micros(us.0)
+            });
+        scope.feed(bytes, latency, Instant::now());
+    }
+    Ok(())
 }
 
 impl PulseSink {
@@ -142,7 +164,14 @@ impl PulseSink {
             stream_name,
             stream: None,
             batch: Batch::new(bytes_for(REQUEST_MS) as usize),
+            scope: None,
         }
+    }
+
+    /// Lets `scope` hear what is played.
+    pub fn with_scope(mut self, scope: Arc<Scope>) -> PulseSink {
+        self.scope = Some(scope);
+        self
     }
 }
 
@@ -176,8 +205,9 @@ impl Sink for PulseSink {
         let Some(stream) = self.stream.take() else {
             return Ok(());
         };
+        let scope = self.scope.as_deref();
         self.batch
-            .finish(|bytes| stream.write(bytes))
+            .finish(|bytes| write_to(&stream, scope, bytes))
             .map_err(|e| SinkError::OnWrite(format!("PulseAudio: {e}")))?;
         stream
             .drain()
@@ -195,8 +225,9 @@ impl Sink for PulseSink {
                 "PulseAudio: cannot play undecoded audio".into(),
             ));
         };
+        let scope = self.scope.as_deref();
         self.batch
-            .push(&samples, |bytes| stream.write(bytes))
+            .push(&samples, |bytes| write_to(stream, scope, bytes))
             .map_err(|e| SinkError::OnWrite(format!("PulseAudio: {e}")))
     }
 }

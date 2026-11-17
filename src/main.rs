@@ -12,6 +12,7 @@ mod qr;
 mod search;
 mod settings;
 mod tracks;
+mod visualizer;
 mod widgets;
 mod window;
 
@@ -54,6 +55,10 @@ const CSS: &str = "
 .skip-seconds { font-size: 7pt; font-weight: 800; margin-top: 2px; }
 .play-large { min-width: 42px; min-height: 42px; }
 .continue-card { padding: 10px; }
+/* The visualizer is always dark, whatever the style: light text on it. */
+.visualizer-caption { color: white; text-shadow: 0 1px 8px rgba(0, 0, 0, 0.6); }
+.visualizer-caption .artists { opacity: 0.75; }
+.visualizer-caption .cover-large { box-shadow: 0 6px 24px rgba(0, 0, 0, 0.45); }
 .progress-edge { min-height: 3px; padding: 0; margin: 0; }
 .progress-edge trough { min-height: 3px; border-radius: 0; padding: 0; margin: 0; }
 .progress-edge highlight { border-radius: 0; }
@@ -68,7 +73,7 @@ const CSS: &str = "
 }
 ";
 
-/// The icons Adwaita lacks (the hearts), built into the binary. GTK finds
+/// The icons Adwaita lacks (the hearts, the waveform), built into the binary. GTK finds
 /// them on its own under the app's resource path, the app id as a path.
 fn register_resources() {
     gtk::gio::resources_register_include!("descant.gresource").expect("built-in resources");
@@ -96,6 +101,7 @@ fn main() -> gtk::glib::ExitCode {
     app.set_accels_for_action("win.play-pause", &["<Control>space"]);
     app.set_accels_for_action("win.next", &["<Control>Right"]);
     app.set_accels_for_action("win.previous", &["<Control>Left"]);
+    app.set_accels_for_action("win.visualizer-fullscreen", &["F11"]);
     app.run()
 }
 
@@ -112,6 +118,7 @@ mod tests {
             widgets::LIKE_ICON,
             widgets::SKIP_BACK_ICON,
             widgets::SKIP_FORWARD_ICON,
+            widgets::VISUALIZER_ICON,
         ] {
             let path = format!("/{base}/icons/scalable/actions/{icon}.svg");
             let found = gtk::gio::resources_lookup_data(&path, gtk::gio::ResourceLookupFlags::NONE);
