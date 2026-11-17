@@ -56,6 +56,7 @@ modules:
       - install -Dm644 data/io.github.develonrails.Descant.desktop /app/share/applications/io.github.develonrails.Descant.desktop
       - install -Dm644 data/io.github.develonrails.Descant.metainfo.xml /app/share/metainfo/io.github.develonrails.Descant.metainfo.xml
       - install -Dm644 data/icons/io.github.develonrails.Descant.svg /app/share/icons/hicolor/scalable/apps/io.github.develonrails.Descant.svg
+      - install -Dm644 data/icons/io.github.develonrails.Descant-symbolic.svg /app/share/icons/hicolor/symbolic/apps/io.github.develonrails.Descant-symbolic.svg
       - install -Dm644 data/io.github.develonrails.Descant.gschema.xml /app/share/glib-2.0/schemas/io.github.develonrails.Descant.gschema.xml
       - glib-compile-schemas /app/share/glib-2.0/schemas
     sources:
