@@ -3,7 +3,8 @@
 //! librespot plays; this crate keeps it honest. [`pulse::PulseSink`] sends
 //! the sound to PulseAudio in tenths of a second, [`sink::GuardedSink`] stops
 //! a failing audio output from taking the whole app down,
-//! [`equalizer::EqualizedSink`] applies the equalizer, [`tap`] hears the
+//! [`equalizer::EqualizedSink`] applies the equalizer, [`scope`] lets the
+//! visualizer hear what plays, [`tap`] hears the
 //! audio-key refusals librespot only logs, and [`engine::LibrespotEngine`]
 //! drives the player through Spirc and reports what happens as
 //! [`descant_core::supervisor::Input`]s.
@@ -12,5 +13,6 @@ pub mod controller;
 pub mod engine;
 pub mod equalizer;
 pub mod pulse;
+pub mod scope;
 pub mod sink;
 pub mod tap;

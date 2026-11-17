@@ -15,8 +15,8 @@
   <description>
     <p>
       Descant plays your Spotify music in a native GNOME window that starts fast
-      and stays light. No skins, no visualizers, no feeds: your playlists,
-      search and discovery, and music that keeps playing.
+      and stays light. No skins, no feeds: your playlists, search and
+      discovery, and music that keeps playing.
     </p>
     <p>
       Log in by scanning a code with the phone that has Spotify on it.
@@ -28,6 +28,7 @@
       <li>Podcasts: follow shows, save episodes, go on where you left off</li>
       <li>Picks up where you left off</li>
       <li>A ten-band equalizer with presets</li>
+      <li>A visualizer in your accent colour, also full screen</li>
       <li>Keeps playing with the window closed, if you like</li>
       <li>Media keys and GNOME's media controls</li>
     </ul>

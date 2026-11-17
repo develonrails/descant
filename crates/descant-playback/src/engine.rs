@@ -31,6 +31,7 @@ use tokio::{sync::mpsc::UnboundedSender, task::JoinHandle};
 use crate::{
     equalizer::{EqualizedSink, EqualizerSetting},
     pulse::PulseSink,
+    scope::Scope,
     sink::GuardedSink,
 };
 
@@ -165,6 +166,16 @@ fn bitrate(quality: Quality) -> Bitrate {
     }
 }
 
+/// What the sound goes through on its way out.
+#[derive(Clone)]
+pub struct AudioPath {
+    /// Which stream to ask Spotify for.
+    pub quality: Quality,
+    pub equalizer: EqualizerSetting,
+    /// Hears what plays, for the visualizer.
+    pub scope: Arc<Scope>,
+}
+
 impl LibrespotEngine {
     /// Connects `session` with `credentials`, appears as a Connect device
     /// called `device_name`, and reports to `reports` until shut down.
@@ -173,10 +184,14 @@ impl LibrespotEngine {
         credentials: Credentials,
         device_name: &str,
         initial_volume: u16,
-        quality: Quality,
-        equalizer: EqualizerSetting,
+        audio: AudioPath,
         reports: UnboundedSender<Report>,
     ) -> Result<LibrespotEngine, Error> {
+        let AudioPath {
+            quality,
+            equalizer,
+            scope,
+        } = audio;
         // Spirc asks for a client token before it connects the session, but
         // the player has to exist by then: a thread with its own runtime,
         // built for nothing when there is no way through. Asking first is
@@ -199,7 +214,7 @@ impl LibrespotEngine {
             mixer.get_soft_volume(),
             move || {
                 let guarded = GuardedSink::new(
-                    Box::new(|| Box::new(PulseSink::new(None))),
+                    Box::new(move || Box::new(PulseSink::new(None).with_scope(scope.clone()))),
                     Box::new(move |message| {
                         let _ = sink_reports.send(Report::Input(Input::SinkFailed { message }));
                     }),

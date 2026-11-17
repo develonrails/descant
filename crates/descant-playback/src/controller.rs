@@ -24,6 +24,7 @@ use tokio::{sync::mpsc, time::Instant};
 use crate::{
     engine::{self, LibrespotEngine, Report},
     equalizer::EqualizerSetting,
+    scope::Scope,
     tap,
 };
 
@@ -73,6 +74,8 @@ pub struct ControllerConfig {
     /// Which stream to ask Spotify for. Fixed when the player is built, so
     /// changing it builds a new one.
     pub quality: Quality,
+    /// Hears what plays, for the visualizer; kept across reconnects.
+    pub scope: std::sync::Arc<Scope>,
 }
 
 impl Default for ControllerConfig {
@@ -85,6 +88,7 @@ impl Default for ControllerConfig {
             resume: None,
             equalizer: EqualizerSetting::default(),
             quality: Quality::default(),
+            scope: Scope::new(),
         }
     }
 }
@@ -144,8 +148,11 @@ async fn connect(
         credentials.clone(),
         &config.device_name,
         volume,
-        config.quality,
-        config.equalizer.clone(),
+        engine::AudioPath {
+            quality: config.quality,
+            equalizer: config.equalizer.clone(),
+            scope: config.scope.clone(),
+        },
         reports,
     )
     .await

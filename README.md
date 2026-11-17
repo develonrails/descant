@@ -36,8 +36,9 @@ or dark style and accent colour, keeps its settings in GSettings, works with
 media keys and the shell's media controls (MPRIS), and ships as a Flatpak.
 
 **Focused.** Playlists, podcasts, search, discovery, your library and
-playback, done well. No skins, no visualizers, no friend feed, no news, no
-audiobooks. A smaller app has fewer places for bugs to hide.
+playback, done well. No skins, no friend feed, no news, no audiobooks. A
+smaller app has fewer places for bugs to hide. The one indulgence, a
+visualizer, costs nothing until you switch it on.
 
 **Private.** Descant has no servers, no telemetry and no developer key of its
 own. It talks to Spotify with your own session and nothing else. Your sign-in
@@ -62,6 +63,10 @@ lives in the system keyring, and audio is streamed, never stored.
 - **Media controls:** play, skip, seek and set the volume from the media keys,
   GNOME's media controls, GSConnect or `playerctl` (MPRIS).
 - **Ten-band equalizer** with presets, for playback on this computer.
+- **Visualizer:** switch it on beside the heart and the music turns to light
+  above the bar, or full screen. Four presets (Tunnel, Nebula, Spectrum,
+  Starfield) in your accent colour, the song showing as it changes, in step
+  with what you hear.
 - **Keep playing in the background** when the window is closed, if you want.
 - **Keyboard shortcuts:** <kbd>Ctrl</kbd>+<kbd>?</kbd> lists them.
 
@@ -111,18 +116,18 @@ build reaches people.
 
 | | |
 |---|---|
-| `crates/descant-core` | The rules: when to play, wait, retry or reconnect, as a state machine with the clock passed in, so every case is tested exactly. Also the equalizer, and the podcast rules: where you left off, what is new, what is played. No I/O. |
-| `crates/descant-playback` | librespot, driven through Spotify Connect (Spirc). Keeps a failing audio output from taking the app down and hears the key refusals librespot only logs. |
+| `crates/descant-core` | The rules: when to play, wait, retry or reconnect, as a state machine with the clock passed in, so every case is tested exactly. Also the equalizer, what the visualizer hears in the sound (bands, levels, beats), and the podcast rules: where you left off, what is new, what is played. No I/O. |
+| `crates/descant-playback` | librespot, driven through Spotify Connect (Spirc). Keeps a failing audio output from taking the app down, hears the key refusals librespot only logs, and lets the visualizer hear what plays as it reaches the speakers. |
 | `crates/descant-spotify` | Your library, Home, search and podcasts, through the same session librespot uses (Spotify's Web API refuses clients like this one). Pairing and the keyring. |
-| `src/` | The GTK app, and MPRIS. |
+| `src/` | The GTK app, MPRIS, and the visualizer's drawing. |
 
 ## Thanks
 
 Descant stands on [librespot](https://github.com/librespot-org/librespot), which
 does the hard part.
 
-The heart is [Lucide](https://lucide.dev)'s (ISC); its licence is beside it in
-`data/icons/actions`.
+The heart and the waveform are [Lucide](https://lucide.dev)'s (ISC); its
+licence is beside them in `data/icons/actions`.
 
 If Descant is useful to you, you can [buy me a coffee](https://ko-fi.com/apenzoon).
 

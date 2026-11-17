@@ -1,5 +1,5 @@
 //! The Preferences dialog: the account, how Descant runs, what it keeps on
-//! disk, and the equalizer.
+//! disk, the equalizer, and the visualizer.
 //!
 //! Everything is a GSettings key. The equalizer also changes the curve the
 //! audio path plays with at once, and saves it a moment after the last move
@@ -24,7 +24,12 @@ use crate::{
     images,
     nav::{Event, Nav},
     runtime,
-    settings::{self, EQUALIZER, KEEP_PLAYING, QUALITY},
+    settings::{
+        self, EQUALIZER, KEEP_PLAYING, QUALITY, VISUALIZER_ACCENT, VISUALIZER_PRESET,
+        VISUALIZER_SHUFFLE,
+    },
+    visualizer::Preset,
+    widgets::VISUALIZER_ICON,
 };
 
 /// `nav` is there once signed in; without it there is no account to show.
@@ -39,7 +44,66 @@ pub fn present(
         .build();
     dialog.add(&general(settings, &dialog, nav));
     dialog.add(&Equalizer::page(settings, eq));
+    dialog.add(&visualizer_page(settings));
     dialog.present(Some(parent));
+}
+
+/// Which preset the visualizer draws, picked from a list; a pick shows at
+/// once if the visualizer is on.
+fn visualizer_page(settings: &gio::Settings) -> adw::PreferencesPage {
+    let presets = adw::PreferencesGroup::builder()
+        .title("Preset")
+        .description("Switch the visualizer on with the button beside the heart.")
+        .build();
+    let chosen = settings::visualizer_preset(settings);
+    let mut group: Option<gtk::CheckButton> = None;
+    for preset in Preset::ALL {
+        let check = gtk::CheckButton::builder()
+            .active(preset == chosen)
+            .valign(gtk::Align::Center)
+            .build();
+        check.set_group(group.as_ref());
+        group.get_or_insert_with(|| check.clone());
+        let settings = settings.clone();
+        check.connect_toggled(move |check| {
+            if check.is_active()
+                && let Err(e) = settings.set_string(VISUALIZER_PRESET, preset.id())
+            {
+                log::warn!("visualizer preset not saved: {e}");
+            }
+        });
+        let row = adw::ActionRow::builder()
+            .title(preset.name())
+            .subtitle(preset.description())
+            .activatable_widget(&check)
+            .build();
+        row.add_prefix(&check);
+        presets.add(&row);
+    }
+
+    let shuffle = adw::SwitchRow::builder()
+        .title("Change With Every Song")
+        .subtitle("Each new song shows another preset, picked at random.")
+        .build();
+    settings
+        .bind(VISUALIZER_SHUFFLE, &shuffle, "active")
+        .build();
+    let accent = adw::SwitchRow::builder()
+        .title("Use the Accent Colour")
+        .subtitle("Colours close to the accent colour in GNOME’s Appearance settings. Off, they drift through the rainbow.")
+        .build();
+    settings.bind(VISUALIZER_ACCENT, &accent, "active").build();
+    let changing = adw::PreferencesGroup::new();
+    changing.add(&accent);
+    changing.add(&shuffle);
+
+    let page = adw::PreferencesPage::builder()
+        .title("Visualizer")
+        .icon_name(VISUALIZER_ICON)
+        .build();
+    page.add(&presets);
+    page.add(&changing);
+    page
 }
 
 fn general(
