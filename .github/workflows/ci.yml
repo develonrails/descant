@@ -91,9 +91,12 @@ jobs:
           key: flatpak-builder-${{ hashFiles('build-aux/flatpak/*.yml', 'Cargo.lock') }}
           restore-keys: flatpak-builder-
 
+      # Without rofiles-fuse: the runner cannot start it ("Failure spawning
+      # rofiles-fuse" since 2026-11-17), and it only guards the build cache.
       - name: Build
         run: >
           dbus-run-session -- flatpak run org.flatpak.Builder --user --force-clean
+          --disable-rofiles-fuse
           --repo=repo build-dir build-aux/flatpak/io.github.develonrails.Descant.yml
 
       # The OSTree repository is what release.yml publishes; the bundle is the
