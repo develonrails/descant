@@ -110,3 +110,12 @@ librespot is pinned to a revision on its `dev` branch rather than the 0.8.0
 release, which lacks fixes Descant needs. When Spotify breaks librespot, the fix
 lands on `dev` first: move the `rev` in `Cargo.toml` for all librespot crates at
 once.
+
+For now the pin points at our own fork,
+[develonrails/librespot](https://github.com/develonrails/librespot), branch
+`descant`: upstream `dev` plus
+[#1871](https://github.com/librespot-org/librespot/pull/1871), which keeps the
+session through the access-point resets Spotify makes every few minutes to an
+hour, where upstream drops it (and Descant had to rebuild the player). Patches
+go there only while they wait upstream. Once #1871 is merged, point the crates
+back at librespot-org and leave the fork alone.
