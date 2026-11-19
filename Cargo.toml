@@ -44,14 +44,18 @@ authors = ["Mitchell de Jong"]
 repository = "https://github.com/develonrails/descant"
 rust-version = "1.92"
 
-# librespot's dev branch, pinned: it has fixes 0.8.0 lacks.
+# librespot's dev branch, pinned: it has fixes 0.8.0 lacks. Through our own
+# fork (branch `descant`), which adds librespot-org/librespot#1871: when
+# Spotify resets the access-point connection, which it does every few
+# minutes to an hour, the session logs in again on the next access point
+# instead of dying. Back to upstream once that is merged.
 [workspace.dependencies]
-librespot-core = { git = "https://github.com/librespot-org/librespot", rev = "99b6088bf3ea028f90192676ac1a337fa4b2ed12", default-features = false, features = ["native-tls"] }
-librespot-playback = { git = "https://github.com/librespot-org/librespot", rev = "99b6088bf3ea028f90192676ac1a337fa4b2ed12", default-features = false, features = ["native-tls"] }
-librespot-connect = { git = "https://github.com/librespot-org/librespot", rev = "99b6088bf3ea028f90192676ac1a337fa4b2ed12", default-features = false, features = ["native-tls"] }
-librespot-metadata = { git = "https://github.com/librespot-org/librespot", rev = "99b6088bf3ea028f90192676ac1a337fa4b2ed12", default-features = false, features = ["native-tls"] }
-librespot-oauth = { git = "https://github.com/librespot-org/librespot", rev = "99b6088bf3ea028f90192676ac1a337fa4b2ed12", default-features = false, features = ["native-tls"] }
-librespot-protocol = { git = "https://github.com/librespot-org/librespot", rev = "99b6088bf3ea028f90192676ac1a337fa4b2ed12" }
+librespot-core = { git = "https://github.com/develonrails/librespot", rev = "14c86372f99e08b59ea68fe4bfa1cb5ee3be5993", default-features = false, features = ["native-tls"] }
+librespot-playback = { git = "https://github.com/develonrails/librespot", rev = "14c86372f99e08b59ea68fe4bfa1cb5ee3be5993", default-features = false, features = ["native-tls"] }
+librespot-connect = { git = "https://github.com/develonrails/librespot", rev = "14c86372f99e08b59ea68fe4bfa1cb5ee3be5993", default-features = false, features = ["native-tls"] }
+librespot-metadata = { git = "https://github.com/develonrails/librespot", rev = "14c86372f99e08b59ea68fe4bfa1cb5ee3be5993", default-features = false, features = ["native-tls"] }
+librespot-oauth = { git = "https://github.com/develonrails/librespot", rev = "14c86372f99e08b59ea68fe4bfa1cb5ee3be5993", default-features = false, features = ["native-tls"] }
+librespot-protocol = { git = "https://github.com/develonrails/librespot", rev = "14c86372f99e08b59ea68fe4bfa1cb5ee3be5993" }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

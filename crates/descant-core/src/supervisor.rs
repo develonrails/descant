@@ -228,6 +228,9 @@ pub struct Supervisor {
     preload_cooldown_until: Option<Millis>,
     reconnect_attempt: usize,
     resume_after_reconnect: bool,
+    /// Whether the lost connection was announced; only then is getting it
+    /// back. Lost with nothing playing, it is put right without a word.
+    loss_announced: bool,
     /// What the network monitor last said.
     network: bool,
     /// A load or skip asked for while waiting, sent when the wait is over.
@@ -251,6 +254,7 @@ impl Supervisor {
             preload_cooldown_until: None,
             reconnect_attempt: 0,
             resume_after_reconnect: false,
+            loss_announced: false,
             network: true,
             deferred: None,
             skip_window_until: None,
@@ -554,6 +558,12 @@ impl Supervisor {
     }
 
     fn session_lost(&mut self, now: Millis) -> Vec<Effect> {
+        // Already on it: a second report of the same loss (the engine's
+        // watch and Spirc both noticing) must not start a second attempt,
+        // nor forget that music was playing.
+        if matches!(self.status, Status::Reconnecting { .. }) {
+            return vec![];
+        }
         if let Some(since) = self.playing_since.take() {
             self.position_ms = self.position_ms.saturating_add((now - since) as u32);
         }
@@ -565,16 +575,25 @@ impl Supervisor {
         self.reconnect_attempt = 0;
         self.skip_window_until = None;
         self.pending_skip = 0;
+        // Spotify closes a connection that has been quiet for a few minutes.
+        // Paused, nobody is listening: reconnect without saying so, and Play
+        // then starts from a session that works.
+        self.loss_announced = self.resume_after_reconnect;
+        let mut effects = Vec::new();
+        if self.loss_announced {
+            effects.push(Effect::Notify(Notice::ConnectionLost));
+        }
         if !self.network {
             // Building a session (and a player) cannot work now: wait for
             // the network instead.
             self.status = Status::Reconnecting {
                 retry_at: Some(now + self.config.offline_retry_ms),
             };
-            return vec![Effect::Notify(Notice::ConnectionLost)];
+            return effects;
         }
         self.status = Status::Reconnecting { retry_at: None };
-        vec![Effect::Notify(Notice::ConnectionLost), Effect::Reconnect]
+        effects.push(Effect::Reconnect);
+        effects
     }
 
     /// Offline, a waiting reconnect waits for the network; once it is back,
@@ -609,7 +628,10 @@ impl Supervisor {
 
     fn session_restored(&mut self) -> Vec<Effect> {
         self.reconnect_attempt = 0;
-        let mut effects = vec![Effect::Notify(Notice::Recovered)];
+        let mut effects = Vec::new();
+        if std::mem::take(&mut self.loss_announced) {
+            effects.push(Effect::Notify(Notice::Recovered));
+        }
         if let Some(command) = self.deferred.take() {
             self.status = Status::Idle;
             effects.push(Effect::Send(command));
@@ -1074,11 +1096,12 @@ mod tests {
                 position_ms: 5_000,
             },
         );
-        at(&mut s, 60_000, Input::SessionLost);
+        // Paused, the loss and the recovery pass without a word.
         assert_eq!(
-            at(&mut s, 61_000, Input::SessionRestored),
-            vec![Effect::Notify(Notice::Recovered)]
+            at(&mut s, 60_000, Input::SessionLost),
+            vec![Effect::Reconnect]
         );
+        assert_eq!(at(&mut s, 61_000, Input::SessionRestored), vec![]);
         assert_eq!(s.status(), &Status::Paused { track: T1.into() });
         assert_eq!(
             at(&mut s, 70_000, user(Command::Play)),
@@ -1087,6 +1110,59 @@ mod tests {
                 position_ms: 5_000
             }]
         );
+    }
+
+    #[test]
+    fn play_during_a_quiet_reconnect_plays_once_it_is_back() {
+        let mut s = sup();
+        playing_t1(&mut s, 0);
+        at(
+            &mut s,
+            5_000,
+            Input::Paused {
+                track: T1.into(),
+                position_ms: 5_000,
+            },
+        );
+        at(&mut s, 300_000, Input::SessionLost);
+        assert_eq!(at(&mut s, 300_200, user(Command::Play)), vec![]);
+        assert_eq!(
+            at(&mut s, 301_000, Input::SessionRestored),
+            vec![Effect::Reload {
+                track: T1.into(),
+                position_ms: 5_000
+            }]
+        );
+    }
+
+    #[test]
+    fn a_second_report_of_the_same_loss_starts_no_second_attempt() {
+        let mut s = sup();
+        playing_t1(&mut s, 0);
+        at(&mut s, 1_000, Input::SessionLost);
+        assert_eq!(at(&mut s, 1_100, Input::SessionLost), vec![]);
+        // and music that was playing still comes back
+        assert_eq!(
+            at(&mut s, 2_000, Input::SessionRestored),
+            vec![
+                Effect::Notify(Notice::Recovered),
+                Effect::Reload {
+                    track: T1.into(),
+                    position_ms: 1_000
+                }
+            ]
+        );
+    }
+
+    #[test]
+    fn nothing_playing_a_lost_session_is_put_right_without_a_word() {
+        let mut s = sup();
+        assert_eq!(
+            at(&mut s, 1_000, Input::SessionLost),
+            vec![Effect::Reconnect]
+        );
+        assert_eq!(at(&mut s, 2_000, Input::SessionRestored), vec![]);
+        assert_eq!(s.status(), &Status::Idle);
     }
 
     #[test]
