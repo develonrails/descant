@@ -90,7 +90,8 @@ struct Ui {
     cover: gtk::Image,
     title: gtk::Label,
     artist: gtk::Label,
-    /// The artist line of the playing track; a status message may stand in for it.
+    /// The artist line of the playing track, as markup with a link per
+    /// artist; a status message may stand in for it.
     artist_text: RefCell<String>,
     /// Shown inside the play button while a track loads, so nothing moves.
     loading: adw::Spinner,
@@ -309,11 +310,12 @@ impl Ui {
             .max_width_chars(24)
             .css_classes(["heading"])
             .build();
+        // Each artist a link to their page, so more of them is a click away.
         let artist = gtk::Label::builder()
             .xalign(0.0)
             .ellipsize(gtk::pango::EllipsizeMode::End)
             .max_width_chars(24)
-            .css_classes(["dim-label"])
+            .css_classes(["dim-label", "artist-links"])
             .build();
         let labels = gtk::Box::builder()
             .orientation(gtk::Orientation::Vertical)
@@ -555,6 +557,19 @@ impl Ui {
         self.open_link.connect_clicked(move |_| {
             let url = ui.pairing_url.borrow().clone();
             gtk::UriLauncher::new(&url).launch(Some(&ui.window), gio::Cancellable::NONE, |_| {});
+        });
+        // An artist in the bar opens their page, in Descant, not a browser.
+        let ui = self.clone();
+        self.artist.connect_activate_link(move |label, uri| {
+            if !uri.starts_with("spotify:artist:") {
+                return glib::Propagation::Stop;
+            }
+            let name = link_text(&label.label(), uri).unwrap_or_default();
+            ui.open(Destination::Artist {
+                uri: uri.to_string(),
+                name,
+            });
+            glib::Propagation::Stop
         });
         let ui = self.clone();
         self.sidebar.connect_row_selected(move |_, row| {
@@ -1297,12 +1312,12 @@ impl Ui {
             Some(message) => {
                 self.artist.add_css_class("accent");
                 self.artist.remove_css_class("dim-label");
-                self.artist.set_label(&message);
+                self.artist.set_text(&message);
             }
             None => {
                 self.artist.remove_css_class("accent");
                 self.artist.add_css_class("dim-label");
-                self.artist.set_label(&self.artist_text.borrow());
+                self.artist.set_markup(&self.artist_text.borrow());
             }
         }
         self.set_inhibit(matches!(status, Status::Playing { .. }));
@@ -1630,9 +1645,9 @@ impl Ui {
         }
         self.show_transport(info.uri.starts_with("spotify:episode:"));
         self.title.set_label(&info.title);
-        let artists = info.artist_line();
+        let artists = artist_markup(&info);
         if !self.artist.has_css_class("accent") {
-            self.artist.set_label(&artists);
+            self.artist.set_markup(&artists);
         }
         *self.artist_text.borrow_mut() = artists;
         images::show(&self.cover, pick(&info.covers, COVER_SIZE, &self.cover));
@@ -1972,6 +1987,31 @@ fn round_button(icon: &str, tooltip: &str, action: &str) -> gtk::Button {
         .build()
 }
 
+/// The artist line as markup: each artist that has a page a link to it.
+fn artist_markup(info: &TrackInfo) -> String {
+    info.artist_links()
+        .into_iter()
+        .map(|(name, uri)| {
+            let name = glib::markup_escape_text(name);
+            match uri {
+                Some(uri) => format!("<a href=\"{}\">{name}</a>", glib::markup_escape_text(uri)),
+                None => name.to_string(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// The name a link to `uri` shows in `markup`, unescaped.
+fn link_text(markup: &str, uri: &str) -> Option<String> {
+    let start = format!("<a href=\"{}\">", glib::markup_escape_text(uri));
+    let rest = &markup[markup.find(&start)? + start.len()..];
+    let escaped = &rest[..rest.find("</a>")?];
+    gtk::pango::parse_markup(escaped, '\0')
+        .ok()
+        .map(|(_, text, _)| text.to_string())
+}
+
 /// "ABCDEF" → "ABC DEF": easier to read off and type.
 fn spaced(code: &str) -> String {
     if code.len() == 6 && code.is_ascii() {
@@ -2028,6 +2068,35 @@ async fn pair(events: mpsc::UnboundedSender<PairingEvent>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn artists_with_a_page_are_links_and_names_are_escaped() {
+        let info = TrackInfo {
+            artists: vec!["Simon & Garfunkel".into(), "Eminem".into()],
+            artist_uris: vec!["spotify:artist:a".into(), "spotify:artist:b".into()],
+            ..TrackInfo::default()
+        };
+        let markup = artist_markup(&info);
+        assert_eq!(
+            markup,
+            "<a href=\"spotify:artist:a\">Simon &amp; Garfunkel</a>, \
+             <a href=\"spotify:artist:b\">Eminem</a>"
+        );
+        assert_eq!(
+            link_text(&markup, "spotify:artist:a").as_deref(),
+            Some("Simon & Garfunkel")
+        );
+        assert_eq!(link_text(&markup, "spotify:artist:c"), None);
+    }
+
+    #[test]
+    fn a_show_stays_plain_text() {
+        let info = TrackInfo {
+            artists: vec!["Tom & Jerry's Show".into()],
+            ..TrackInfo::default()
+        };
+        assert_eq!(artist_markup(&info), "Tom &amp; Jerry&apos;s Show");
+    }
 
     #[test]
     fn codes_are_split_for_reading() {

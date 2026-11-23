@@ -59,6 +59,9 @@ const CSS: &str = "
 .visualizer-caption { color: white; text-shadow: 0 1px 8px rgba(0, 0, 0, 0.6); }
 .visualizer-caption .artists { opacity: 0.75; }
 .visualizer-caption .cover-large { box-shadow: 0 6px 24px rgba(0, 0, 0, 0.45); }
+/* The artists in the bar are links, but stay quiet until pointed at. */
+.artist-links link, .artist-links link:visited { color: inherit; text-decoration: none; }
+.artist-links link:hover, .artist-links link:focus { text-decoration: underline; }
 .progress-edge { min-height: 3px; padding: 0; margin: 0; }
 .progress-edge trough { min-height: 3px; border-radius: 0; padding: 0; margin: 0; }
 .progress-edge highlight { border-radius: 0; }
