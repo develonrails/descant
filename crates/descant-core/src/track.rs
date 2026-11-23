@@ -100,6 +100,23 @@ impl TrackInfo {
         self.artists.join(", ")
     }
 
+    /// Each artist, with the `spotify:artist:` URI to open it by when there
+    /// is one. A show (an episode's "artist") and a list whose URIs do not
+    /// line up with the names have none.
+    pub fn artist_links(&self) -> Vec<(&str, Option<&str>)> {
+        let paired = self.artist_uris.len() == self.artists.len();
+        self.artists
+            .iter()
+            .enumerate()
+            .map(|(i, name)| {
+                let uri = paired
+                    .then(|| self.artist_uris[i].as_str())
+                    .filter(|uri| uri.starts_with("spotify:artist:"));
+                (name.as_str(), uri)
+            })
+            .collect()
+    }
+
     /// The smallest cover wide enough for `min_width`, else the largest there
     /// is; see [`cover_at_least`].
     pub fn cover_for(&self, min_width: u32) -> Option<&Cover> {
@@ -125,6 +142,48 @@ pub fn cover_at_least(covers: &[Cover], min_width: u32) -> Option<&Cover> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn track(artists: &[&str], uris: &[&str]) -> TrackInfo {
+        TrackInfo {
+            artists: artists.iter().map(|a| a.to_string()).collect(),
+            artist_uris: uris.iter().map(|u| u.to_string()).collect(),
+            ..TrackInfo::default()
+        }
+    }
+
+    #[test]
+    fn each_artist_comes_with_the_uri_to_open_it_by() {
+        let t = track(
+            &["Rammstein", "Eminem"],
+            &["spotify:artist:a", "spotify:artist:b"],
+        );
+        assert_eq!(
+            t.artist_links(),
+            vec![
+                ("Rammstein", Some("spotify:artist:a")),
+                ("Eminem", Some("spotify:artist:b"))
+            ]
+        );
+    }
+
+    #[test]
+    fn without_matching_artist_uris_nothing_is_a_link() {
+        // an episode: its show stands in for the artist
+        assert_eq!(
+            track(&["The Show"], &[]).artist_links(),
+            vec![("The Show", None)]
+        );
+        // URIs that do not line up with the names
+        assert_eq!(
+            track(&["A", "B"], &["spotify:artist:a"]).artist_links(),
+            vec![("A", None), ("B", None)]
+        );
+        // and only artists are artists
+        assert_eq!(
+            track(&["A"], &["spotify:show:a"]).artist_links(),
+            vec![("A", None)]
+        );
+    }
 
     fn info() -> TrackInfo {
         TrackInfo {
