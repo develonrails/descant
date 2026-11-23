@@ -146,6 +146,33 @@ impl Queue {
         let index = self.tracks.iter().position(|t| t == current)?;
         self.tracks.get(index + n).cloned()
     }
+
+    /// Where going back `n` tracks leads.
+    fn back(&self, n: usize) -> Back {
+        let index = self
+            .current
+            .as_ref()
+            .and_then(|current| self.tracks.iter().position(|t| t == current));
+        match index {
+            Some(0) => Back::Restart,
+            Some(i) if n > 1 => Back::Load(self.tracks[i.saturating_sub(n)].clone()),
+            _ => Back::Spirc,
+        }
+    }
+}
+
+/// What going back means, given what comes before the current track.
+#[derive(Debug, PartialEq, Eq)]
+enum Back {
+    /// Nothing before it: start it again, as Spotify's apps do. Spirc,
+    /// asked for the track before the first, stops playback altogether.
+    Restart,
+    /// One back, or nothing known about what came before: Spirc's own,
+    /// which also restarts a track that has played over 3 s.
+    Spirc,
+    /// Further back: that track at once, never past the first, as a skip
+    /// forward loads its target. One audio key, not one per track passed.
+    Load(String),
 }
 
 pub struct LibrespotEngine {
@@ -379,7 +406,6 @@ impl LibrespotEngine {
         match n {
             0 => Ok(()),
             1 => self.spirc.next(),
-            -1 => self.spirc.prev(),
             n if n > 1 => {
                 let target = {
                     let queue = self.queue.lock().unwrap();
@@ -397,7 +423,27 @@ impl LibrespotEngine {
                     None => (0..n).try_for_each(|_| self.spirc.next()),
                 }
             }
-            n => (0..-n).try_for_each(|_| self.spirc.prev()),
+            n => {
+                let back = {
+                    let queue = self.queue.lock().unwrap();
+                    match queue.back(n.unsigned_abs() as usize) {
+                        Back::Load(track) => Some((queue.again(&track), track)),
+                        Back::Restart => None,
+                        Back::Spirc => return (0..-n).try_for_each(|_| self.spirc.prev()),
+                    }
+                };
+                match back {
+                    Some((again, track)) => {
+                        let options = LoadRequestOptions {
+                            start_playing: true,
+                            playing_track: Some(PlayingTrack::Uri(track)),
+                            ..Default::default()
+                        };
+                        self.spirc.load(again.request(options))
+                    }
+                    None => self.spirc.set_position_ms(0),
+                }
+            }
         }
     }
 
@@ -661,6 +707,31 @@ mod tests {
             upcoming,
             Some(vec![C.to_string(), D.to_string(), E.to_string()])
         );
+    }
+
+    #[test]
+    fn back_from_the_first_track_starts_it_again_instead_of_stopping() {
+        let q = queue_after_load();
+        report_for(loading(A), &q);
+        assert_eq!(q.lock().unwrap().back(1), Back::Restart);
+        assert_eq!(q.lock().unwrap().back(3), Back::Restart);
+    }
+
+    #[test]
+    fn one_back_is_spircs_and_further_back_loads_the_track_never_past_the_first() {
+        let q = queue_after_load();
+        report_for(loading(D), &q);
+        let q = q.lock().unwrap();
+        assert_eq!(q.back(1), Back::Spirc);
+        assert_eq!(q.back(2), Back::Load(B.into()));
+        assert_eq!(q.back(3), Back::Load(A.into()));
+        assert_eq!(q.back(9), Back::Load(A.into()));
+    }
+
+    #[test]
+    fn back_from_an_unknown_track_is_left_to_spirc() {
+        let q = queue_after_load();
+        assert_eq!(q.lock().unwrap().back(2), Back::Spirc);
     }
 
     #[test]
