@@ -324,10 +324,16 @@ impl Supervisor {
             }
             Input::Stopped => {
                 self.playing_since = None;
+                // The player has let go of the track (the end of what was
+                // playing, Previous before the first track, another device
+                // taking over): Play must load it again, from the top, as
+                // a bare Play to an empty player does nothing.
+                self.player_has_track = false;
                 if matches!(
                     self.status,
                     Status::Loading { .. } | Status::Playing { .. } | Status::Paused { .. }
                 ) {
+                    self.position_ms = 0;
                     self.status = Status::Idle;
                 }
                 vec![]
@@ -1080,6 +1086,22 @@ mod tests {
                     position_ms: 40_000
                 }
             ]
+        );
+        assert_eq!(s.status(), &Status::Loading { track: T1.into() });
+    }
+
+    #[test]
+    fn play_after_the_player_stopped_loads_the_track_again_from_the_top() {
+        let mut s = sup();
+        playing_t1(&mut s, 0);
+        at(&mut s, 5_000, Input::Stopped);
+        assert_eq!(s.status(), &Status::Idle);
+        assert_eq!(
+            at(&mut s, 9_000, user(Command::Play)),
+            vec![Effect::Reload {
+                track: T1.into(),
+                position_ms: 0
+            }]
         );
         assert_eq!(s.status(), &Status::Loading { track: T1.into() });
     }
