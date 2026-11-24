@@ -64,8 +64,9 @@ lives in the system keyring, and audio is streamed, never stored.
   GNOME's media controls, GSConnect or `playerctl` (MPRIS).
 - **Ten-band equalizer** with presets, for playback on this computer.
 - **Visualizer:** the button beside the heart turns the music to light above
-  the bar, in step with what you hear; the corner button, <kbd>F11</kbd> or a
-  double click take it full screen, <kbd>Esc</kbd> brings it back. When a
+  the bar, in step with what you hear; a click on it plays or pauses, and the
+  corner button, <kbd>F11</kbd> or a double click take it full screen,
+  <kbd>Esc</kbd> brings it back. When a
   song starts, its cover and title show in the corner for a moment.
   In Preferences, under Visualizer:
   - four presets: **Tunnel** (the waveform as a ring, its echoes zooming
