@@ -13,6 +13,8 @@
 //!
 //! In GNOME's power saver mode it draws half as often.
 //!
+//! A click on it plays or pauses; a double click goes full screen.
+//!
 //! It draws with GTK's own render nodes (gradients and rectangles the GPU
 //! draws as they are), into a `GtkPicture`, one frame per display frame.
 //! It only runs while it can be seen: hidden, it neither listens to the
@@ -126,6 +128,8 @@ pub struct Visualizer {
     /// Full screen: the button and the pointer hide while nothing moves.
     immersed: Cell<bool>,
     hide_pending: RefCell<Option<glib::SourceId>>,
+    /// A click waiting to be sure it is not the first of a double click.
+    click_pending: RefCell<Option<glib::SourceId>>,
     caption: Caption,
     /// The preset shown now: the chosen one, or another with every song.
     preset: Cell<Preset>,
@@ -271,6 +275,7 @@ impl Visualizer {
             power: gio::PowerProfileMonitor::get_default(),
             immersed: Cell::new(false),
             hide_pending: RefCell::new(None),
+            click_pending: RefCell::new(None),
             caption,
             preset: Cell::new(settings::visualizer_preset(settings)),
             settings: settings.clone(),
@@ -333,18 +338,40 @@ impl Visualizer {
                 v.scene.replace(Scene::new());
                 picture.set_paintable(None::<&gdk::Paintable>);
                 v.hide_caption();
+                v.forget_click();
             }
         });
 
-        let double = gtk::GestureClick::new();
-        double.connect_pressed(|gesture, presses, _, _| {
-            if presses == 2
-                && let Some(widget) = gesture.widget()
-            {
-                let _ = widget.activate_action("win.visualizer-fullscreen", None);
+        // A click plays or pauses, a double click goes full screen. A click
+        // waits out the double-click time first, so that a double click
+        // does not pause and resume on its way to full screen. Clicks on
+        // the full-screen button stay the button's.
+        let clicks = gtk::GestureClick::new();
+        let weak = Rc::downgrade(self);
+        clicks.connect_pressed(move |gesture, presses, _, _| {
+            let (Some(v), Some(widget)) = (weak.upgrade(), gesture.widget()) else {
+                return;
+            };
+            v.forget_click();
+            match on_press(presses) {
+                Click::Wait => {
+                    let weak = Rc::downgrade(&v);
+                    let id = glib::timeout_add_local_once(double_click_time(), move || {
+                        if let Some(v) = weak.upgrade() {
+                            // it has fired: only forget it
+                            v.click_pending.borrow_mut().take();
+                        }
+                        let _ = widget.activate_action("win.play-pause", None);
+                    });
+                    *v.click_pending.borrow_mut() = Some(id);
+                }
+                Click::FullScreen => {
+                    let _ = widget.activate_action("win.visualizer-fullscreen", None);
+                }
+                Click::Nothing => {}
             }
         });
-        self.root.add_controller(double);
+        self.root.add_controller(clicks);
 
         let motion = gtk::EventControllerMotion::new();
         let weak = Rc::downgrade(self);
@@ -354,6 +381,13 @@ impl Visualizer {
             }
         });
         self.root.add_controller(motion);
+    }
+
+    /// Drops a click still waiting to play or pause.
+    fn forget_click(&self) {
+        if let Some(pending) = self.click_pending.borrow_mut().take() {
+            pending.remove();
+        }
     }
 
     /// Whether music plays; it starts drawing again when it does.
@@ -911,6 +945,30 @@ impl Scene {
     }
 }
 
+/// What a press on the visualizer does, by how many presses in a row.
+#[derive(Debug, PartialEq, Eq)]
+enum Click {
+    /// The first: play or pause, unless a second follows in time.
+    Wait,
+    FullScreen,
+    /// A third and on: nothing more.
+    Nothing,
+}
+
+fn on_press(presses: i32) -> Click {
+    match presses {
+        1 => Click::Wait,
+        2 => Click::FullScreen,
+        _ => Click::Nothing,
+    }
+}
+
+/// How long GNOME waits for the second click of a double click.
+fn double_click_time() -> Duration {
+    let ms = gtk::Settings::default().map_or(400, |s| s.gtk_double_click_time());
+    Duration::from_millis(ms.clamp(100, 1000) as u64)
+}
+
 /// A small, fast generator: plenty for scattering stars and picking presets.
 struct Random(u32);
 
@@ -1104,6 +1162,13 @@ mod tests {
         assert_eq!(drawn_per_second(60, true), 30);
         assert_eq!(drawn_per_second(120, false), 60);
         assert_eq!(drawn_per_second(120, true), 30);
+    }
+
+    #[test]
+    fn a_click_waits_a_double_click_goes_full_screen() {
+        assert_eq!(on_press(1), Click::Wait);
+        assert_eq!(on_press(2), Click::FullScreen);
+        assert_eq!(on_press(3), Click::Nothing);
     }
 
     #[test]
