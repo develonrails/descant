@@ -1696,11 +1696,27 @@ impl Ui {
         let dialog = adw::AlertDialog::builder()
             .heading("This Account Can't Play Here")
             .body(
-                "Spotify protects the audio of this account with its own DRM (PlayPlay), \
-                 which only Spotify's official apps can play. Descant will not work around it.",
+                "Spotify no longer lets this account play outside its own apps. Descant \
+                 counts as an older kind of device, which Spotify is phasing out: only \
+                 accounts that have played on one in the past year still can, and new \
+                 accounts can't be enabled.\n\n\
+                 You can still browse, search and use your library here. The music \
+                 plays in Spotify's own app or web player. Descant does not work around \
+                 Spotify's protection.",
             )
             .build();
         dialog.add_response("ok", "_OK");
+        dialog.add_response("web", "Open _Web Player");
+        dialog.set_response_appearance("web", adw::ResponseAppearance::Suggested);
+        dialog.set_default_response(Some("web"));
+        let window = self.window.clone();
+        dialog.connect_response(Some("web"), move |_, _| {
+            gtk::UriLauncher::new("https://open.spotify.com").launch(
+                Some(&window),
+                gio::Cancellable::NONE,
+                |_| {},
+            );
+        });
         dialog.present(Some(&self.window));
     }
 
