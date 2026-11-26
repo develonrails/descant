@@ -89,6 +89,17 @@ lives in the system keyring, and audio is streamed, never stored.
 
 You need a **Spotify Premium** account; librespot cannot play on a free one.
 
+**Not every account can still play.** Descant plays through librespot, which
+Spotify treats as an older kind of Connect device (the "eSDK v1" used by
+speakers and streamers). Spotify is phasing those out: in its words, only
+accounts that have played on such a device within the last year can go on
+using them, and new accounts can no longer be enabled. On an account that
+can't, Descant says so plainly; browsing, search and your library still work,
+and the music plays in Spotify's own apps or at
+[open.spotify.com](https://open.spotify.com). Descant does not work around
+Spotify's protection. Background:
+[librespot#1649](https://github.com/librespot-org/librespot/issues/1649).
+
 ## Install
 
 Descant comes as a Flatpak from its own signed repository on GitHub Pages.

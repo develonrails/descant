@@ -32,7 +32,12 @@
       <li>Keeps playing with the window closed, if you like</li>
       <li>Media keys and GNOME's media controls</li>
     </ul>
-    <p>Requires Spotify Premium. Descant is not affiliated with Spotify.</p>
+    <p>
+      Requires Spotify Premium, on an account Spotify still lets play on
+      devices like this one: Spotify is phasing them out, and only accounts
+      that have played on such a device in the past year can. Descant is not
+      affiliated with Spotify.
+    </p>
   </description>
 
   <screenshots>
