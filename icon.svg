@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+  <!-- A record in purple vinyl, face on. On its yellow label the bars rise
+       to the middle: a voice above the rest, a descant. Adwaita colours;
+       a darker side below gives it GNOME's depth. -->
+  <defs>
+    <linearGradient id="side" x1="8" x2="120" y1="0" y2="0" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#613583"/>
+      <stop offset=".05" stop-color="#813d9c"/>
+      <stop offset=".1" stop-color="#613583"/>
+      <stop offset=".9" stop-color="#613583"/>
+      <stop offset=".95" stop-color="#813d9c"/>
+      <stop offset="1" stop-color="#613583"/>
+    </linearGradient>
+  </defs>
+  <!-- the record: its side, its face, light on the grooves above and below -->
+  <circle cx="64" cy="67" r="56" fill="url(#side)"/>
+  <circle cx="64" cy="62" r="56" fill="#813d9c"/>
+  <path d="M42.4 13.6A53 53 0 0 1 85.6 13.6L75.0 37.3A27 27 0 0 0 53.0 37.3Z" fill="#dc8add" opacity=".6"/>
+  <path d="M85.6 110.4A53 53 0 0 1 42.4 110.4L53.0 86.7A27 27 0 0 0 75.0 86.7Z" fill="#dc8add" opacity=".4"/>
+  <circle cx="64" cy="62" r="36" fill="none" stroke="#613583" stroke-width="1.5"/>
+  <circle cx="64" cy="62" r="45" fill="none" stroke="#613583" stroke-width="1.5"/>
+  <circle cx="64" cy="62" r="55" fill="none" stroke="#c061cb" stroke-width="2"/>
+  <!-- the label, its bars, the spindle hole -->
+  <circle cx="64" cy="62" r="24" fill="#f6d32d"/>
+  <circle cx="64" cy="62" r="23" fill="none" stroke="#e5a50a" stroke-width="2"/>
+  <g fill="#241f31">
+    <rect x="40.8" y="59" width="4.4" height="6" rx="2.2"/>
+    <rect x="47.8" y="56" width="4.4" height="12" rx="2.2"/>
+    <rect x="54.8" y="52" width="4.4" height="20" rx="2.2"/>
+    <rect x="68.8" y="52" width="4.4" height="20" rx="2.2"/>
+    <rect x="75.8" y="56" width="4.4" height="12" rx="2.2"/>
+    <rect x="82.8" y="59" width="4.4" height="6" rx="2.2"/>
+    <circle cx="64" cy="62" r="3"/>
+  </g>
+</svg>
